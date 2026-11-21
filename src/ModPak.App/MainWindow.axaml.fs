@@ -92,6 +92,11 @@ type MainWindow() as self =
     let mutable renameMenuItem: MenuItem = null
     let mutable deleteMenuItem: MenuItem = null
     let mutable unpakMenuItem: MenuItem = null
+    let mutable diskOpenMenuItem: MenuItem = null
+    let mutable diskAddMenuItem: MenuItem = null
+    let mutable diskInfoMenuItem: MenuItem = null
+    let mutable diskRenameMenuItem: MenuItem = null
+    let mutable diskDeleteMenuItem: MenuItem = null
     let mutable codecBox: ComboBox = null
     let mutable statusText: TextBlock = null
     let mutable package: ModPakPackage option = None
@@ -170,6 +175,11 @@ type MainWindow() as self =
         infoButton <- self.FindControl<Button>("InfoButton")
         openMenuItem <- self.FindControl<MenuItem>("OpenMenuItem")
         unpakMenuItem <- self.FindControl<MenuItem>("UnpakMenuItem")
+        diskOpenMenuItem <- self.FindControl<MenuItem>("DiskOpenMenuItem")
+        diskAddMenuItem <- self.FindControl<MenuItem>("DiskAddMenuItem")
+        diskInfoMenuItem <- self.FindControl<MenuItem>("DiskInfoMenuItem")
+        diskRenameMenuItem <- self.FindControl<MenuItem>("DiskRenameMenuItem")
+        diskDeleteMenuItem <- self.FindControl<MenuItem>("DiskDeleteMenuItem")
         codecBox <- self.FindControl<ComboBox>("CodecBox")
         statusText <- self.FindControl<TextBlock>("StatusText")
         self.InitializeScriptEditor()
@@ -178,6 +188,7 @@ type MainWindow() as self =
         self.InitDiskExplorer()
         self.WireExplorerPackageDragDrop()
         self.UpdateFileActionsEnabled()
+        self.UpdateDiskActionsEnabled()
         self.UpdateSaveEnabled()
 
         if not (isNull manifestSlugBox) then
@@ -1170,6 +1181,17 @@ type MainWindow() as self =
         buttons.Children.Add(secondary)
         buttons
 
+    member private self.DialogButtonRow3(ok: Button, cancel: Button, apply: Button) =
+        let buttons =
+            StackPanel(
+                Orientation = Orientation.Horizontal,
+                Spacing = 8.0,
+                HorizontalAlignment = HorizontalAlignment.Right)
+        buttons.Children.Add(ok)
+        buttons.Children.Add(cancel)
+        buttons.Children.Add(apply)
+        buttons
+
     member private self.WrapStudioDialog(title: string, root: Control) =
         let material =
             ExperimentalAcrylicMaterial(
@@ -1912,9 +1934,28 @@ type MainWindow() as self =
         |> Seq.sortBy snd
         |> Seq.toList
 
+    member private self.IsModPakPackagePath(path: string) =
+        let ext = Path.GetExtension path
+        ModPakFormat.OpenPatterns
+        |> Array.exists (fun pattern ->
+            let wanted = pattern.TrimStart('*')
+            String.Equals(ext, wanted, StringComparison.OrdinalIgnoreCase))
+
+    member private self.ConfirmAndLoadPackage(path: string) =
+        async {
+            let name = Path.GetFileName path
+            let message = $"Open this package?\n\n{name}\n{path}"
+            let! confirmed = self.ShowConfirmDialog("Open package", message) |> Async.AwaitTask
+            if confirmed then
+                self.TryLoadPackageFromPath path |> ignore
+        }
+        |> Async.StartImmediate
+
     member private self.OpenSelectedDiskItem(_: obj, _: RoutedEventArgs) =
         match self.SelectedDiskItem() with
         | Some row when row.IsDirectory || row.IsParent -> self.NavigateDisk row.PathKey
+        | Some row when File.Exists row.PathKey && self.IsModPakPackagePath row.PathKey ->
+            self.ConfirmAndLoadPackage row.PathKey
         | Some row when File.Exists row.PathKey -> self.ShellOpen row.PathKey
         | _ -> self.Show("Select a disk item.", muteBrush)
 
@@ -1940,6 +1981,156 @@ type MainWindow() as self =
             self.Show("Select files or folders in Explorer to add.", muteBrush)
         else
             self.CopyDiskSelectionToPackage roots
+
+    member private self.EnsureDiskMenuItemRefs() =
+        if isNull diskOpenMenuItem then
+            diskOpenMenuItem <- self.FindControl<MenuItem>("DiskOpenMenuItem")
+        if isNull diskAddMenuItem then
+            diskAddMenuItem <- self.FindControl<MenuItem>("DiskAddMenuItem")
+        if isNull diskInfoMenuItem then
+            diskInfoMenuItem <- self.FindControl<MenuItem>("DiskInfoMenuItem")
+        if isNull diskRenameMenuItem then
+            diskRenameMenuItem <- self.FindControl<MenuItem>("DiskRenameMenuItem")
+        if isNull diskDeleteMenuItem then
+            diskDeleteMenuItem <- self.FindControl<MenuItem>("DiskDeleteMenuItem")
+
+    member private self.UpdateDiskActionsEnabled() =
+        self.EnsureDiskMenuItemRefs()
+        let selected = self.SelectedDiskItem()
+        let canOpen =
+            match selected with
+            | Some _ -> true
+            | None -> false
+        let canAdd = not (self.SelectedDiskRoots().IsEmpty)
+        let canInfo =
+            match selected with
+            | Some row when not row.IsParent && (File.Exists row.PathKey || Directory.Exists row.PathKey) ->
+                true
+            | _ -> false
+        let canEdit =
+            match selected with
+            | Some row when
+                not row.IsParent
+                && not (self.IsDriveRoot row.PathKey)
+                && (File.Exists row.PathKey || Directory.Exists row.PathKey) ->
+                true
+            | _ -> false
+        let canDelete = not (self.SelectedDiskRoots().IsEmpty)
+        if not (isNull diskOpenMenuItem) then
+            diskOpenMenuItem.IsEnabled <- canOpen
+        if not (isNull diskAddMenuItem) then
+            diskAddMenuItem.IsEnabled <- canAdd
+        if not (isNull diskInfoMenuItem) then
+            diskInfoMenuItem.IsEnabled <- canInfo
+        if not (isNull diskRenameMenuItem) then
+            diskRenameMenuItem.IsEnabled <- canEdit
+        if not (isNull diskDeleteMenuItem) then
+            diskDeleteMenuItem.IsEnabled <- canDelete
+
+    member private self.DiskListContextRequested(_: obj, e: ContextRequestedEventArgs) =
+        match e.Source with
+        | :? Avalonia.Visual as source -> self.SelectDiskListItemUnder source
+        | _ -> ()
+        self.UpdateDiskActionsEnabled()
+        e.Handled <- false
+
+    member private self.DiskListMenuOpening(sender: obj, _: CancelEventArgs) =
+        match sender with
+        | :? ContextMenu as menu ->
+            for item in menu.Items do
+                match item with
+                | :? MenuItem as mi when mi.Name = "DiskOpenMenuItem" -> diskOpenMenuItem <- mi
+                | :? MenuItem as mi when mi.Name = "DiskAddMenuItem" -> diskAddMenuItem <- mi
+                | :? MenuItem as mi when mi.Name = "DiskInfoMenuItem" -> diskInfoMenuItem <- mi
+                | :? MenuItem as mi when mi.Name = "DiskRenameMenuItem" -> diskRenameMenuItem <- mi
+                | :? MenuItem as mi when mi.Name = "DiskDeleteMenuItem" -> diskDeleteMenuItem <- mi
+                | _ -> ()
+        | _ -> ()
+        self.UpdateDiskActionsEnabled()
+
+    member private self.SelectAllDiskItems(_: obj, _: RoutedEventArgs) =
+        if not (isNull diskList) then
+            diskList.SelectAll()
+            self.UpdateDiskActionsEnabled()
+
+    member private self.UnselectAllDiskItems(_: obj, _: RoutedEventArgs) =
+        if not (isNull diskList) then
+            diskList.UnselectAll()
+            self.UpdateDiskActionsEnabled()
+
+    member private self.RenameSelectedDiskItem(_: obj, _: RoutedEventArgs) =
+        match self.SelectedDiskItem() with
+        | Some row when
+            not row.IsParent
+            && not (self.IsDriveRoot row.PathKey)
+            && (File.Exists row.PathKey || Directory.Exists row.PathKey) ->
+            async {
+                let! renamed = self.ShowRenameDialog(Path.GetFileName row.PathKey) |> Async.AwaitTask
+                match renamed with
+                | None -> ()
+                | Some nextName ->
+                    let trimmed = nextName.Trim().Replace('/', Path.DirectorySeparatorChar)
+                    if String.IsNullOrWhiteSpace trimmed
+                       || trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                       || trimmed.Contains("\\") then
+                        self.Show("Invalid name.", errBrush)
+                    else
+                        let parent = Path.GetDirectoryName row.PathKey
+                        if String.IsNullOrWhiteSpace parent then
+                            self.Show("Cannot rename this item.", errBrush)
+                        else
+                            let dest = Path.Combine(parent, trimmed)
+                            if String.Equals(row.PathKey, dest, StringComparison.OrdinalIgnoreCase) then
+                                ()
+                            elif File.Exists dest || Directory.Exists dest then
+                                self.Show("An item with that name already exists.", errBrush)
+                            else
+                                try
+                                    if Directory.Exists row.PathKey then
+                                        Directory.Move(row.PathKey, dest)
+                                    else
+                                        File.Move(row.PathKey, dest)
+                                    self.RefreshDiskExplorer()
+                                    self.Show($"Renamed to {trimmed}", okBrush)
+                                with error ->
+                                    self.Show(error.Message, errBrush)
+            }
+            |> Async.StartImmediate
+        | _ -> self.Show("Select a file or folder to rename.", muteBrush)
+
+    member private self.DeleteSelectedDiskItems(_: obj, _: RoutedEventArgs) =
+        let roots = self.SelectedDiskRoots()
+        if roots.IsEmpty then
+            self.Show("Select files or folders to delete.", muteBrush)
+        else
+            async {
+                let label = if roots.Length = 1 then "item" else "items"
+                let! confirmed =
+                    self.ShowConfirmDialog("Delete", $"Delete {roots.Length} {label} from disk?")
+                    |> Async.AwaitTask
+                if confirmed then
+                    let mutable removed = 0
+                    let mutable lastError = ""
+                    for path in roots do
+                        try
+                            if Directory.Exists path then
+                                Directory.Delete(path, true)
+                                removed <- removed + 1
+                            elif File.Exists path then
+                                File.Delete path
+                                removed <- removed + 1
+                        with error ->
+                            lastError <- error.Message
+                    self.RefreshDiskExplorer()
+                    self.UpdateDiskActionsEnabled()
+                    if removed = 0 && lastError <> "" then
+                        self.Show(lastError, errBrush)
+                    elif lastError <> "" then
+                        self.Show($"Deleted {removed}; last error: {lastError}", errBrush)
+                    else
+                        self.Show($"Deleted {removed} {label}.", okBrush)
+            }
+            |> Async.StartImmediate
 
     member private self.MergeBuiltEntriesIntoPackage(entries: ModPakEntry list, absPaths: string list) =
         let pkg = self.EnsurePackage()
@@ -2660,77 +2851,56 @@ type MainWindow() as self =
         if ms = 0UL then
             "—"
         else
-            DateTimeOffset.FromUnixTimeMilliseconds(int64 ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            DateTimeOffset.FromUnixTimeMilliseconds(int64 ms).ToLocalTime().ToString("dddd d MMMM yyyy, HH:mm:ss")
 
-    member private self.InfoPropertyGrid(rows: (string * string) list) =
-        let grid = Grid(ColumnDefinitions = ColumnDefinitions("Auto,*"), RowDefinitions = RowDefinitions())
-        rows
-        |> List.iteri (fun i (label, value) ->
-            grid.RowDefinitions.Add(RowDefinition(Height = GridLength.Auto))
-            let labelBlock =
-                TextBlock(
-                    Text = label,
-                    FontSize = 12.0,
-                    Foreground = SolidColorBrush(Color.Parse "#A89888"),
-                    Margin = Thickness(0.0, 0.0, 14.0, 8.0),
-                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center)
-            let valueBlock =
-                TextBlock(
-                    Text = value,
-                    FontSize = 12.0,
-                    Foreground = SolidColorBrush(Color.Parse "#F0E6DC"),
-                    TextWrapping = TextWrapping.Wrap,
-                    Margin = Thickness(0.0, 0.0, 0.0, 8.0),
-                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center)
-            Grid.SetRow(labelBlock, i)
-            Grid.SetColumn(labelBlock, 0)
-            Grid.SetRow(valueBlock, i)
-            Grid.SetColumn(valueBlock, 1)
-            grid.Children.Add(labelBlock)
-            grid.Children.Add(valueBlock))
-        grid
+    member private self.FormatBytesDetailed(bytes: int64) =
+        let n = float bytes
+        let human =
+            if bytes >= 1024L * 1024L then $"%.1f{n / 1024.0 / 1024.0} MB"
+            elif bytes >= 1024L then $"%.1f{n / 1024.0} KB"
+            else $"{bytes} B"
+        $"{human} ({bytes:N0} bytes)"
 
-    member private self.BuildFileInfoContent(entry: ModPakEntry) =
-        let meta = entry.Meta
-        let rows =
-            [
-                "Path", entry.RelativePath
-                "MIME", (if String.IsNullOrWhiteSpace entry.Mime then "—" else entry.Mime)
-                "Compression", self.CodecLabel entry.Codec
-                "Size", FileListFormatting.size entry.Bytes.Length
-                "UnpackedSize", string meta.UnpackedSize
-                "Permissions", $"0o{Convert.ToString(int meta.Permissions, 8)}"
-                "Created", self.FormatUnixMs meta.CreatedTime
-                "Modified", self.FormatUnixMs meta.ModifiedTime
-                "Accessed", self.FormatUnixMs meta.AccessedTime
-                "CRC32", $"0x{meta.Crc32:X8}"
-            ]
-        let fileIcon = icons.GetIcon entry.RelativePath
-        let titleText =
+    member private self.FileTypeLabel(path: string, mime: string) =
+        let ext = Path.GetExtension path
+        let extPart =
+            if String.IsNullOrWhiteSpace ext then ""
+            else $" ({ext.ToLowerInvariant()})"
+        if not (String.IsNullOrWhiteSpace mime) then
+            $"{mime}{extPart}"
+        elif String.IsNullOrWhiteSpace ext then
+            "File"
+        else
+            $"{ext.TrimStart('.').ToUpperInvariant()} File{extPart}"
+
+    member private self.PropertiesSeparator() =
+        Border(
+            Height = 1.0,
+            Background = SolidColorBrush(Color.Parse "#3F3731"),
+            Margin = Thickness(0.0, 10.0, 0.0, 10.0),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch)
+
+    member private self.PropertiesField(label: string, value: string) =
+        let grid = Grid(Margin = Thickness(0.0, 0.0, 0.0, 6.0))
+        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(118.0)))
+        grid.ColumnDefinitions.Add(ColumnDefinition(Width = GridLength(1.0, GridUnitType.Star)))
+        let labelBlock =
             TextBlock(
-                Text = Path.GetFileName entry.RelativePath,
-                FontSize = 16.0,
-                FontWeight = FontWeight.SemiBold,
+                Text = label,
+                FontSize = 12.0,
+                Foreground = SolidColorBrush(Color.Parse "#A89888"),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top)
+        let valueBlock =
+            TextBlock(
+                Text = value,
+                FontSize = 12.0,
                 Foreground = SolidColorBrush(Color.Parse "#F0E6DC"),
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                TextWrapping = TextWrapping.NoWrap)
-        let titleRow = DockPanel(LastChildFill = true, Margin = Thickness(0.0, 0.0, 0.0, 12.0))
-        if not (isNull fileIcon) then
-            let iconImage =
-                Image(
-                    Source = fileIcon,
-                    Width = 36.0,
-                    Height = 36.0,
-                    Margin = Thickness(0.0, 0.0, 10.0, 0.0),
-                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center)
-            DockPanel.SetDock(iconImage, Avalonia.Controls.Dock.Left)
-            titleRow.Children.Add(iconImage)
-        titleRow.Children.Add(titleText)
-        let panel = StackPanel(Spacing = 4.0)
-        panel.Children.Add(titleRow)
-        panel.Children.Add(self.InfoPropertyGrid rows)
-        panel :> Control
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top)
+        Grid.SetColumn(valueBlock, 1)
+        grid.Children.Add(labelBlock)
+        grid.Children.Add(valueBlock)
+        grid :> Control
 
     member private self.TryPackageForInfo() =
         match package with
@@ -2746,86 +2916,402 @@ type MainWindow() as self =
                 }
         | None -> None
 
-    member private self.BuildContainerInfoContent(pkg: ModPakPackage) =
-        let major, minor = self.ContainerVersion()
-        let rows =
-            [
-                "Format", "ModPak"
-                "Container", "MODPAK64"
-                "Version", $"{major}.{minor}"
-            ]
-            @ (self.ChunkCounts pkg |> List.map (fun (id, n) -> id, string n))
-        let logo =
-            Image(
-                Source = new Bitmap(AssetLoader.Open(Uri("avares://ModPak.App/Assets/KI.png"))),
-                Width = 44.0,
-                Height = 44.0,
-                Margin = Thickness(0.0, 0.0, 12.0, 0.0),
+    member private self.ShowPropertiesDialog
+        (
+            title: string,
+            icon: IImage,
+            initialName: string,
+            typeLabel: string,
+            location: string,
+            sizeText: string,
+            sizeOnDiskText: string,
+            created: string,
+            modified: string,
+            accessed: string,
+            readOnly: bool,
+            hidden: bool,
+            extraRows: (string * string) list,
+            canEditAttrs: bool,
+            onApply: (string * bool * bool) -> bool
+        ) =
+        let nameBox =
+            TextBox(
+                Text = initialName,
+                MinHeight = 34.0,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center)
-        let titleText =
+        let header = DockPanel(LastChildFill = true, Margin = Thickness(0.0, 0.0, 0.0, 14.0))
+        if not (isNull icon) then
+            let iconImage =
+                Image(
+                    Source = icon,
+                    Width = 48.0,
+                    Height = 48.0,
+                    Margin = Thickness(0.0, 0.0, 14.0, 0.0),
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center)
+            DockPanel.SetDock(iconImage, Avalonia.Controls.Dock.Left)
+            header.Children.Add(iconImage)
+        header.Children.Add(nameBox)
+
+        let body = StackPanel(Spacing = 0.0)
+        body.Children.Add(header)
+        body.Children.Add(self.PropertiesField("Type of file:", typeLabel))
+        body.Children.Add(self.PropertiesField("Location:", location))
+        body.Children.Add(self.PropertiesField("Size:", sizeText))
+        body.Children.Add(self.PropertiesField("Size on disk:", sizeOnDiskText))
+        body.Children.Add(self.PropertiesSeparator())
+        body.Children.Add(self.PropertiesField("Created:", created))
+        body.Children.Add(self.PropertiesField("Modified:", modified))
+        body.Children.Add(self.PropertiesField("Accessed:", accessed))
+        for label, value in extraRows do
+            body.Children.Add(self.PropertiesField(label, value))
+        body.Children.Add(self.PropertiesSeparator())
+
+        let readOnlyBox =
+            CheckBox(
+                Content = "Read-only",
+                IsChecked = Nullable(readOnly),
+                IsEnabled = canEditAttrs,
+                Margin = Thickness(0.0, 0.0, 16.0, 0.0))
+        let hiddenBox =
+            CheckBox(
+                Content = "Hidden",
+                IsChecked = Nullable(hidden),
+                IsEnabled = canEditAttrs)
+        let attrsRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = 8.0)
+        let attrsLabel =
             TextBlock(
-                Text =
-                    (match packagePath with
-                     | Some path -> Path.GetFileName path
-                     | None -> "ModPak"),
-                FontSize = 16.0,
-                FontWeight = FontWeight.SemiBold,
-                Foreground = SolidColorBrush(Color.Parse "#F0E6DC"),
+                Text = "Attributes:",
+                FontSize = 12.0,
+                Foreground = SolidColorBrush(Color.Parse "#A89888"),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                TextWrapping = TextWrapping.NoWrap)
-        let titleRow = DockPanel(LastChildFill = true, Margin = Thickness(0.0, 0.0, 0.0, 12.0))
-        DockPanel.SetDock(logo, Avalonia.Controls.Dock.Left)
-        titleRow.Children.Add(logo)
-        titleRow.Children.Add(titleText)
-        let panel = StackPanel(Spacing = 4.0)
-        panel.Children.Add(titleRow)
-        panel.Children.Add(self.InfoPropertyGrid rows)
-        panel :> Control
+                Width = 118.0)
+        attrsRow.Children.Add(attrsLabel)
+        attrsRow.Children.Add(readOnlyBox)
+        attrsRow.Children.Add(hiddenBox)
+        body.Children.Add(attrsRow)
+
+        let ok = self.DialogAccentButton("OK")
+        let cancel = self.DialogCommandButton("Cancel")
+        let apply = self.DialogCommandButton("Apply")
+        apply.IsEnabled <- false
+        let buttons = self.DialogButtonRow3(ok, cancel, apply)
+        buttons.Margin <- Thickness(0.0, 18.0, 0.0, 0.0)
+
+        let markDirty () =
+            let nameNow = if isNull nameBox.Text then "" else nameBox.Text.Trim()
+            let roNow = readOnlyBox.IsChecked.GetValueOrDefault(false)
+            let hidNow = hiddenBox.IsChecked.GetValueOrDefault(false)
+            apply.IsEnabled <-
+                not (String.Equals(nameNow, initialName, StringComparison.Ordinal))
+                || roNow <> readOnly
+                || hidNow <> hidden
+
+        nameBox.TextChanged.Add(fun _ -> markDirty ())
+        readOnlyBox.IsCheckedChanged.Add(fun _ -> markDirty ())
+        hiddenBox.IsCheckedChanged.Add(fun _ -> markDirty ())
+
+        let tryApply () =
+            let nameNow = if isNull nameBox.Text then "" else nameBox.Text.Trim()
+            let roNow = readOnlyBox.IsChecked.GetValueOrDefault(false)
+            let hidNow = hiddenBox.IsChecked.GetValueOrDefault(false)
+            if onApply (nameNow, roNow, hidNow) then
+                apply.IsEnabled <- false
+                true
+            else
+                false
+
+        let root = DockPanel()
+        DockPanel.SetDock(buttons, Avalonia.Controls.Dock.Bottom)
+        root.Children.Add(buttons)
+        root.Children.Add(ScrollViewer(Content = body, MaxHeight = 520.0))
+
+        let dialog =
+            Window(
+                Title = title,
+                Width = 420.0,
+                SizeToContent = SizeToContent.Height,
+                CanResize = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Background = SolidColorBrush(Color.Parse "#1A1613"),
+                Icon = WindowIcon(AssetLoader.Open(Uri("avares://ModPak.App/Assets/icon.ico"))),
+                Content = Border(Padding = Thickness(20.0), Child = root))
+        ok.Click.Add(fun _ ->
+            if (not apply.IsEnabled) || tryApply () then
+                dialog.Close())
+        cancel.Click.Add(fun _ -> dialog.Close())
+        apply.Click.Add(fun _ -> tryApply () |> ignore)
+        dialog.ShowDialog(self) |> ignore
+
+    member private self.ShowEntryProperties(entry: ModPakEntry) =
+        let meta = entry.Meta
+        let name = Path.GetFileName entry.RelativePath
+        let parent =
+            match Path.GetDirectoryName entry.RelativePath with
+            | null | "" -> "/"
+            | dir ->
+                let normalized = Pathing.normalize dir
+                if String.IsNullOrWhiteSpace normalized then "/" else normalized
+        let location =
+            match packagePath with
+            | Some path -> $"{Path.GetDirectoryName path}  ·  {parent}"
+            | None -> parent
+        let sizeBytes = int64 entry.Bytes.Length
+        let unpacked = int64 meta.UnpackedSize
+        let readOnly = meta.Permissions = 0o444us
+        self.ShowPropertiesDialog(
+            $"{name} Properties",
+            icons.GetIcon entry.RelativePath,
+            name,
+            self.FileTypeLabel(entry.RelativePath, entry.Mime),
+            location,
+            self.FormatBytesDetailed sizeBytes,
+            self.FormatBytesDetailed (if unpacked > 0L then unpacked else sizeBytes),
+            self.FormatUnixMs meta.CreatedTime,
+            self.FormatUnixMs meta.ModifiedTime,
+            self.FormatUnixMs meta.AccessedTime,
+            readOnly,
+            false,
+            [
+                "Compression:", self.CodecLabel entry.Codec
+                "CRC32:", $"0x{meta.Crc32:X8}"
+                "Path:", entry.RelativePath
+            ],
+            false,
+            fun (nextName, _, _) ->
+                if String.Equals(nextName, name, StringComparison.Ordinal) then
+                    true
+                elif String.IsNullOrWhiteSpace nextName
+                     || nextName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                     || nextName.Contains('/')
+                     || nextName.Contains('\\') then
+                    self.Show("Invalid name.", errBrush)
+                    false
+                else
+                    let parentPath =
+                        match Path.GetDirectoryName entry.RelativePath with
+                        | null | "" -> ""
+                        | dir -> Pathing.normalize dir
+                    let nextPath =
+                        if parentPath = "" then nextName
+                        else $"{parentPath}/{nextName}"
+                    let pathKey = entry.RelativePath
+                    if self.PathAlreadyUsed nextPath pathKey then
+                        self.Show("Path already used in this package.", errBrush)
+                        false
+                    else
+                        match package with
+                        | Some pkg ->
+                            let nextEntries =
+                                pkg.Entries
+                                |> List.map (fun e ->
+                                    if String.Equals(e.RelativePath, pathKey, StringComparison.OrdinalIgnoreCase) then
+                                        { e with
+                                            RelativePath = nextPath
+                                            Mime = Mime.ofPath nextPath }
+                                    else
+                                        e)
+                            package <- Some { pkg with Entries = nextEntries }
+                            self.RemapFileCodecs(pathKey, nextPath)
+                            self.MarkDirty()
+                            self.RefreshAfterEntryEdit()
+                            self.Show($"Renamed to {nextPath}", okBrush)
+                            true
+                        | None ->
+                            pendingRenames <-
+                                pendingRenames
+                                    .Remove(self.CodecKey pathKey)
+                                    .Add(self.CodecKey pathKey, nextPath)
+                            self.RemapFileCodecs(pathKey, nextPath)
+                            self.MarkDirty()
+                            self.RefreshAfterEntryEdit()
+                            self.Show($"Renamed to {nextPath}", okBrush)
+                            true)
+
+    member private self.ShowContainerProperties(pkg: ModPakPackage) =
+        let name =
+            match packagePath with
+            | Some path -> Path.GetFileNameWithoutExtension path
+            | None -> "ModPak"
+        let titleName =
+            match packagePath with
+            | Some path -> Path.GetFileName path
+            | None -> "ModPak"
+        let location =
+            match packagePath with
+            | Some path ->
+                let dir = Path.GetDirectoryName path
+                if String.IsNullOrWhiteSpace dir then path else dir
+            | None -> "(unsaved)"
+        let sizeBytes, created, modified, accessed =
+            match packagePath with
+            | Some path when File.Exists path ->
+                let info = FileInfo path
+                int64 info.Length,
+                info.CreationTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                info.LastWriteTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                info.LastAccessTime.ToString("dddd d MMMM yyyy, HH:mm:ss")
+            | _ ->
+                let total =
+                    pkg.Entries
+                    |> List.sumBy (fun e -> int64 e.Bytes.Length)
+                total, "—", "—", "—"
+        let major, minor = self.ContainerVersion()
+        let extra =
+            [
+                "Format:", "ModPak"
+                "Container:", "MODPAK64"
+                "Version:", $"{major}.{minor}"
+            ]
+            @ (self.ChunkCounts pkg |> List.map (fun (id, n) -> $"{id}:", string n))
+        let logo = new Bitmap(AssetLoader.Open(Uri("avares://ModPak.App/Assets/KI.png"))) :> IImage
+        self.ShowPropertiesDialog(
+            $"{titleName} Properties",
+            logo,
+            name,
+            "ModPak package (.mpx)",
+            location,
+            self.FormatBytesDetailed sizeBytes,
+            self.FormatBytesDetailed sizeBytes,
+            created,
+            modified,
+            accessed,
+            false,
+            false,
+            extra,
+            false,
+            fun _ -> true)
+
+    member private self.ShowDiskInfoDialog(_: obj, _: RoutedEventArgs) =
+        match self.SelectedDiskItem() with
+        | Some row when not row.IsParent && (File.Exists row.PathKey || Directory.Exists row.PathKey) ->
+            let path = row.PathKey
+            let isDir = Directory.Exists path
+            let name = Path.GetFileName(path.TrimEnd('\\', '/'))
+            let displayName =
+                if String.IsNullOrWhiteSpace name then path else name
+            let parent = Path.GetDirectoryName path
+            let location =
+                if String.IsNullOrWhiteSpace parent then path else parent
+            let icon =
+                if isDir then icons.GetFolderIcon()
+                else icons.GetIcon path
+            let typeLabel =
+                if isDir then "File folder"
+                else self.FileTypeLabel(path, Mime.ofPath path)
+            let sizeBytes, sizeOnDisk, created, modified, accessed, readOnly, hidden =
+                try
+                    if isDir then
+                        let info = DirectoryInfo path
+                        let attrs = info.Attributes
+                        0L,
+                        0L,
+                        info.CreationTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                        info.LastWriteTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                        info.LastAccessTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                        attrs.HasFlag FileAttributes.ReadOnly,
+                        attrs.HasFlag FileAttributes.Hidden
+                    else
+                        let info = FileInfo path
+                        let attrs = info.Attributes
+                        info.Length,
+                        info.Length,
+                        info.CreationTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                        info.LastWriteTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                        info.LastAccessTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
+                        attrs.HasFlag FileAttributes.ReadOnly,
+                        attrs.HasFlag FileAttributes.Hidden
+                with _ ->
+                    0L, 0L, "—", "—", "—", false, false
+            let sizeText =
+                if isDir then "—" else self.FormatBytesDetailed sizeBytes
+            let sizeOnDiskText =
+                if isDir then "—" else self.FormatBytesDetailed sizeOnDisk
+            self.ShowPropertiesDialog(
+                $"{displayName} Properties",
+                icon,
+                displayName,
+                typeLabel,
+                location,
+                sizeText,
+                sizeOnDiskText,
+                created,
+                modified,
+                accessed,
+                readOnly,
+                hidden,
+                [],
+                true,
+                fun (nextName, nextReadOnly, nextHidden) ->
+                    try
+                        let mutable current = path
+                        if not (String.Equals(nextName, displayName, StringComparison.Ordinal)) then
+                            if String.IsNullOrWhiteSpace nextName
+                               || nextName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                               || nextName.Contains('\\')
+                               || nextName.Contains('/') then
+                                self.Show("Invalid name.", errBrush)
+                                false
+                            else
+                                let destParent =
+                                    if String.IsNullOrWhiteSpace parent then
+                                        Path.GetPathRoot path
+                                    else
+                                        parent
+                                let dest = Path.Combine(destParent, nextName)
+                                if File.Exists dest || Directory.Exists dest then
+                                    self.Show("An item with that name already exists.", errBrush)
+                                    false
+                                else
+                                    if isDir then Directory.Move(current, dest)
+                                    else File.Move(current, dest)
+                                    current <- dest
+                                    let mutable attrs =
+                                        if isDir then
+                                            File.GetAttributes current
+                                        else
+                                            File.GetAttributes current
+                                    if nextReadOnly then
+                                        attrs <- attrs ||| FileAttributes.ReadOnly
+                                    else
+                                        attrs <- attrs &&& ~~~FileAttributes.ReadOnly
+                                    if nextHidden then
+                                        attrs <- attrs ||| FileAttributes.Hidden
+                                    else
+                                        attrs <- attrs &&& ~~~FileAttributes.Hidden
+                                    File.SetAttributes(current, attrs)
+                                    self.RefreshDiskExplorer()
+                                    self.Show("Properties updated.", okBrush)
+                                    true
+                        else
+                            let mutable attrs = File.GetAttributes current
+                            if nextReadOnly then
+                                attrs <- attrs ||| FileAttributes.ReadOnly
+                            else
+                                attrs <- attrs &&& ~~~FileAttributes.ReadOnly
+                            if nextHidden then
+                                attrs <- attrs ||| FileAttributes.Hidden
+                            else
+                                attrs <- attrs &&& ~~~FileAttributes.Hidden
+                            File.SetAttributes(current, attrs)
+                            self.RefreshDiskExplorer()
+                            self.Show("Properties updated.", okBrush)
+                            true
+                    with error ->
+                        self.Show(error.Message, errBrush)
+                        false)
+        | _ -> self.Show("Select a file or folder in Explorer.", muteBrush)
 
     member private self.ShowInfoDialog(_: obj, _: RoutedEventArgs) =
         let fileOpt =
             match self.SelectedPathKeys() with
             | [ pathKey ] -> self.TryResolveEntry pathKey
             | _ -> None
-        let pkgOpt = self.TryPackageForInfo()
-        match fileOpt, pkgOpt with
-        | None, None -> self.Show("Open a package or select a file.", muteBrush)
-        | _ ->
-            let tabs = TabControl()
-            match fileOpt with
-            | Some entry ->
-                tabs.Items.Add(TabItem(Header = "Súbor", Content = self.BuildFileInfoContent entry))
-                |> ignore
-            | None -> ()
-            match pkgOpt with
-            | Some pkg ->
-                tabs.Items.Add(TabItem(Header = "Kontajner", Content = self.BuildContainerInfoContent pkg))
-                |> ignore
-            | None -> ()
-            tabs.SelectedIndex <- 0
-            let close: Button = self.DialogOkButton()
-            close.HorizontalAlignment <- Avalonia.Layout.HorizontalAlignment.Right
-            close.MinWidth <- 96.0
-            close.MinHeight <- 32.0
-            close.Padding <- Thickness(16.0, 8.0)
-            close.Margin <- Thickness(0.0, 14.0, 0.0, 0.0)
-            let root = DockPanel()
-            DockPanel.SetDock(close, Avalonia.Controls.Dock.Bottom)
-            root.Children.Add(close)
-            root.Children.Add(tabs)
-            let dialog =
-                Window(
-                    Title = "Info",
-                    Width = 460.0,
-                    SizeToContent = SizeToContent.Height,
-                    CanResize = false,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Background = SolidColorBrush(Color.Parse "#14110F"),
-                    Icon = WindowIcon(AssetLoader.Open(Uri("avares://ModPak.App/Assets/icon.ico"))),
-                    Content = Border(Padding = Thickness(20.0), Child = root))
-            close.Click.Add(fun _ -> dialog.Close())
-            dialog.ShowDialog(self) |> ignore
+        match fileOpt with
+        | Some entry -> self.ShowEntryProperties entry
+        | None ->
+            match self.TryPackageForInfo() with
+            | Some pkg -> self.ShowContainerProperties pkg
+            | None -> self.Show("Open a package or select a file.", muteBrush)
 
     member private self.SetManifestCheck(hasManifest: bool) =
         suppressManifestPersist <- true
@@ -3304,13 +3790,12 @@ type MainWindow() as self =
                 Foreground = SolidColorBrush(Color.Parse color),
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center)
 
-        let iconUri = Uri("avares://ModPak.App/Assets/icon.ico")
         let logo =
             Image(
                 Source = new Bitmap(AssetLoader.Open(Uri("avares://ModPak.App/Assets/KI.png"))),
-                Width = 44.0,
-                Height = 44.0,
-                Margin = Thickness(0.0, 0.0, 0.0, 4.0),
+                Width = 112.0,
+                Height = 112.0,
+                Margin = Thickness(0.0, 0.0, 0.0, 12.0),
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center)
 
         let licenseUrl = Uri("https://opensource.org/licenses/BSD-3-Clause")
@@ -3331,31 +3816,29 @@ type MainWindow() as self =
                 Orientation = Avalonia.Layout.Orientation.Horizontal,
                 Spacing = 4.0,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                Margin = Thickness(0.0, 2.0, 0.0, 0.0))
+                Margin = Thickness(0.0, 2.0, 0.0, 18.0))
         licenseRow.Children.Add(
             TextBlock(
                 Text = "Licensed under the",
                 FontSize = 12.0,
-                Foreground = SolidColorBrush(Color.Parse "#A89888"),
+                Foreground = SolidColorBrush(Color.Parse "#C8B8A8"),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center))
         licenseRow.Children.Add(licenseButton)
 
-        let panel = StackPanel(Spacing = 4.0)
+        let ok = self.DialogOkButton()
+        ok.HorizontalAlignment <- Avalonia.Layout.HorizontalAlignment.Center
+        ok.MinWidth <- 140.0
+
+        let panel = StackPanel(Margin = Thickness(22.0), Spacing = 4.0)
         panel.Children.Add(logo)
         panel.Children.Add(line $"ModPak {AppVersion}" 20.0 "#F0E6DC" FontWeight.SemiBold)
-        panel.Children.Add(line "Frank Hliva" 13.0 "#C8B8A8" FontWeight.Normal)
-        panel.Children.Add(line "Copyright © 2026" 12.0 "#A89888" FontWeight.Normal)
-        panel.Children.Add(line "Kingmaker SAS" 12.0 "#A89888" FontWeight.Normal)
+        panel.Children.Add(line "Frank Hliva" 13.0 "#F3EDE6" FontWeight.Normal)
+        panel.Children.Add(line "Copyright © 2026" 12.0 "#C8B8A8" FontWeight.Normal)
+        panel.Children.Add(line "Kingmaker SAS" 12.0 "#C8B8A8" FontWeight.Normal)
         panel.Children.Add(licenseRow)
+        panel.Children.Add(ok)
 
-        let about =
-            Window(
-                Title = $"About ModPak {AppVersion}",
-                Width = 340.0,
-                SizeToContent = SizeToContent.Height,
-                CanResize = false,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Background = SolidColorBrush(Color.Parse "#1A1613"),
-                Icon = WindowIcon(AssetLoader.Open iconUri),
-                Content = Border(Padding = Thickness(22.0, 28.0), Child = panel))
+        let about = self.WrapStudioDialog($"About ModPak {AppVersion}", panel)
+        about.Width <- 420.0
+        ok.Click.Add(fun _ -> about.Close())
         about.ShowDialog(self) |> ignore

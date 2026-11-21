@@ -221,11 +221,15 @@
                              HorizontalAlignment="Stretch"
                              VerticalAlignment="Stretch"
                              SelectionMode="Multiple"
+                             ContextRequested="DiskListContextRequested"
                              DoubleTapped="DiskListDoubleTapped"
                              KeyDown="DiskListKeyDown">
                         <ListBox.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Open" Click="OpenSelectedDiskItem">
+                            <ContextMenu Opening="DiskListMenuOpening">
+                                <MenuItem x:Name="DiskOpenMenuItem"
+                                          Header="Open"
+                                          Click="OpenSelectedDiskItem"
+                                          IsEnabled="False">
                                     <MenuItem.Icon>
                                         <ic:SymbolIcon Symbol="Open"
                                                        IconVariant="Regular"
@@ -233,9 +237,62 @@
                                                        Foreground="#FFFFFF" />
                                     </MenuItem.Icon>
                                 </MenuItem>
-                                <MenuItem Header="Add to package" Click="AddSelectedDiskFiles">
+                                <MenuItem x:Name="DiskAddMenuItem"
+                                          Header="Add to package"
+                                          Click="AddSelectedDiskFiles"
+                                          IsEnabled="False">
                                     <MenuItem.Icon>
                                         <ic:SymbolIcon Symbol="Add"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Select all" Click="SelectAllDiskItems">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="SelectAllOn"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Unselect all" Click="UnselectAllDiskItems">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="SelectAllOff"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem x:Name="DiskInfoMenuItem"
+                                          Header="Info"
+                                          Click="ShowDiskInfoDialog"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Info"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem x:Name="DiskRenameMenuItem"
+                                          Header="Rename"
+                                          Click="RenameSelectedDiskItem"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Rename"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem x:Name="DiskDeleteMenuItem"
+                                          Header="Delete"
+                                          Click="DeleteSelectedDiskItems"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Delete"
                                                        IconVariant="Regular"
                                                        FontSize="16"
                                                        Foreground="#FFFFFF" />
