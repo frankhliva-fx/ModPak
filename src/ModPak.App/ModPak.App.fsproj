@@ -8,7 +8,7 @@
     <Product>ModPak</Product>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>..\..\..\KingstonStudio\src\Kingston.Studio\Assets\icon.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
   <ItemGroup>
@@ -20,8 +20,8 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <AvaloniaResource Include="..\..\..\KingstonStudio\src\Kingston.Studio\Assets\icon.ico" Link="Assets\icon.ico" />
-    <AvaloniaResource Include="..\..\..\..\img\KI.png" Link="Assets\KI.png" />
+    <AvaloniaResource Include="Assets\icon.ico" />
+    <AvaloniaResource Include="Assets\KI.png" />
     <AvaloniaResource Include="Assets\script-icons\*.svg" />
   </ItemGroup>
   <ItemGroup>

@@ -1585,9 +1585,13 @@ type MainWindow() as self =
                             with _ ->
                                 ""
                         $"{root.TrimEnd('\\')}{vol}"
+                    let icon =
+                        match icons.GetDriveIcon root with
+                        | null -> icons.GetFolderIcon()
+                        | driveIcon -> driveIcon
                     Some(
                         FileListItem(
-                            icons.GetFolderIcon(),
+                            icon,
                             label,
                             "",
                             "<DIR>",

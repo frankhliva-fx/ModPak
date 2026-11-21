@@ -14,6 +14,8 @@ type IFileIconProvider =
     abstract GetIcon: pathOrExtension: string -> IImage
     /// Folder / directory icon (Explorer-style).
     abstract GetFolderIcon: unit -> IImage
+    /// Drive / volume icon for a root path (e.g. "C:\\") — Windows shell type.
+    abstract GetDriveIcon: driveRootPath: string -> IImage
 
 /// List row for the Explorer panel (file or directory).
 type FileListItem
@@ -108,6 +110,7 @@ module private Shell32 =
 /// Windows Explorer icons via SHGetFileInfo (Windows only).
 type WindowsShellFileIconProvider() =
     let cache = ConcurrentDictionary<string, IImage>(StringComparer.OrdinalIgnoreCase)
+    let driveCache = ConcurrentDictionary<string, IImage>(StringComparer.OrdinalIgnoreCase)
     let mutable folderIcon: IImage = null
     let mutable folderIconLoaded = false
 
@@ -126,9 +129,8 @@ type WindowsShellFileIconProvider() =
             let ext = Path.GetExtension value
             if String.IsNullOrEmpty ext then "" else ext.ToLowerInvariant()
 
-    let loadIcon (probe: string) (attrs: uint32) : IImage =
+    let loadIconWithFlags (probe: string) (attrs: uint32) (flags: uint32) : IImage =
         let mutable info = Shell32.SHFILEINFO()
-        let flags = Shell32.SHGFI_ICON ||| Shell32.SHGFI_SMALLICON ||| Shell32.SHGFI_USEFILEATTRIBUTES
         let handle =
             Shell32.SHGetFileInfo(
                 probe,
@@ -152,8 +154,33 @@ type WindowsShellFileIconProvider() =
             finally
                 Shell32.DestroyIcon info.hIcon |> ignore
 
+    let loadIcon (probe: string) (attrs: uint32) : IImage =
+        let flags = Shell32.SHGFI_ICON ||| Shell32.SHGFI_SMALLICON ||| Shell32.SHGFI_USEFILEATTRIBUTES
+        loadIconWithFlags probe attrs flags
+
     let load (pathOrExtension: string) : IImage =
         loadIcon (probePath pathOrExtension) Shell32.FILE_ATTRIBUTE_NORMAL
+
+    let normalizeDriveRoot (driveRootPath: string) =
+        let value = if isNull driveRootPath then "" else driveRootPath.Trim()
+        if value = "" then ""
+        else
+            try
+                Path.GetPathRoot(Path.GetFullPath value)
+                |> fun root -> if isNull root then "" else root
+            with _ ->
+                if value.EndsWith("\\", StringComparison.Ordinal) then value else value + "\\"
+
+    let loadDriveIcon (driveRootPath: string) : IImage =
+        let root = normalizeDriveRoot driveRootPath
+        if root = "" then
+            null
+        else
+            // Real path + no USEFILEATTRIBUTES → Windows returns the actual drive type icon.
+            let flags = Shell32.SHGFI_ICON ||| Shell32.SHGFI_SMALLICON
+            match loadIconWithFlags root 0u flags with
+            | null -> loadIcon root Shell32.FILE_ATTRIBUTE_DIRECTORY
+            | icon -> icon
 
     interface IFileIconProvider with
         member _.GetIcon(pathOrExtension) =
@@ -166,11 +193,17 @@ type WindowsShellFileIconProvider() =
                 folderIconLoaded <- true
             folderIcon
 
+        member _.GetDriveIcon(driveRootPath) =
+            let key = normalizeDriveRoot driveRootPath
+            if key = "" then null
+            else driveCache.GetOrAdd(key, fun root -> loadDriveIcon root)
+
 /// Placeholder provider for non-Windows (swap for theme icons later).
 type FallbackFileIconProvider() =
     interface IFileIconProvider with
         member _.GetIcon(_pathOrExtension) = null
         member _.GetFolderIcon() = null
+        member _.GetDriveIcon(_driveRootPath) = null
 
 module FileIconProvider =
 
