@@ -188,6 +188,37 @@ type Config(reader: ConfigReader) =
             reader.SetString("Dialogs", "OpenFolder", dir)
             reader.Save()
 
+    /// Explorer multi-selection: Total Commander style (click toggles) when true;
+    /// Windows style (Ctrl+click) when false.
+    member self.ExplorerMultiSelection
+        with get () =
+            reader.GetBool(
+                [ "Explorer"; "explorer" ],
+                [ "MultiSelection"; "multi-selection"; "MultiSelect"; "multi-select" ],
+                false)
+        and set (value: bool) =
+            reader.SetBool("Explorer", "MultiSelection", value)
+
+    /// Package pane multi-selection (independent of Explorer).
+    member self.PackageMultiSelection
+        with get () =
+            reader.GetBool(
+                [ "Package"; "package" ],
+                [ "MultiSelection"; "multi-selection"; "MultiSelect"; "multi-select" ],
+                false)
+        and set (value: bool) =
+            reader.SetBool("Package", "MultiSelection", value)
+
+    /// When adding files: overwrite same relative path without asking.
+    member self.OverwriteExistingFiles
+        with get () =
+            reader.GetBool(
+                [ "Pack"; "pack" ],
+                [ "OverwriteExistingFiles"; "overwrite-existing-files"; "Overwrite" ],
+                false)
+        and set (value: bool) =
+            reader.SetBool("Pack", "OverwriteExistingFiles", value)
+
     /// Last opened / saved .mpx package (full path).
     member self.LastPackage
         with get () =

@@ -8,6 +8,7 @@ open System.Diagnostics
 open System.IO
 open System.Runtime.InteropServices
 open System.Text
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Win32
 open Avalonia
@@ -83,6 +84,9 @@ type MainWindow() as self =
     let mutable fileList: ListBox = null
     let mutable diskList: ListBox = null
     let mutable diskPathBox: TextBox = null
+    let mutable explorerMultiSelectionCheck: CheckBox = null
+    let mutable packageMultiSelectionCheck: CheckBox = null
+    let mutable suppressExplorerMultiSelectionPersist = false
     let mutable unpackButton: Button = null
     let mutable unpackAllButton: Button = null
     let mutable saveButton: Button = null
@@ -98,7 +102,14 @@ type MainWindow() as self =
     let mutable diskRenameMenuItem: MenuItem = null
     let mutable diskDeleteMenuItem: MenuItem = null
     let mutable codecBox: ComboBox = null
-    let mutable statusText: TextBlock = null
+    let mutable explorerSelSlot: TextBlock = null
+    let mutable explorerCountSlot: TextBlock = null
+    let mutable explorerStatusSlot: TextBlock = null
+    let mutable packageSelSlot: TextBlock = null
+    let mutable packageCountSlot: TextBlock = null
+    let mutable packageStatusSlot: TextBlock = null
+    /// True = Explorer (disk) pane is active; false = Package pane.
+    let mutable explorerPaneActive = true
     let mutable package: ModPakPackage option = None
     let mutable packagePath: string option = None
     let mutable pendingPaths: string list = []
@@ -125,6 +136,9 @@ type MainWindow() as self =
     let mutable suppressScriptList = false
     let mutable selectedScriptIndex = -1
     let mutable packingInProgress = false
+    /// Set after user confirms close (save / discard) so Closing can proceed.
+    let mutable allowClose = false
+    let mutable closePromptInFlight = false
     /// Explorer → Package drag: press args kept until move threshold or release.
     let mutable diskDragPress: PointerPressedEventArgs option = None
     let mutable diskDragOrigin: Point option = None
@@ -169,6 +183,8 @@ type MainWindow() as self =
         fileList <- self.FindControl<ListBox>("FileList")
         diskList <- self.FindControl<ListBox>("DiskList")
         diskPathBox <- self.FindControl<TextBox>("DiskPathBox")
+        explorerMultiSelectionCheck <- self.FindControl<CheckBox>("ExplorerMultiSelectionCheck")
+        packageMultiSelectionCheck <- self.FindControl<CheckBox>("PackageMultiSelectionCheck")
         unpackButton <- self.FindControl<Button>("UnpackButton")
         unpackAllButton <- self.FindControl<Button>("UnpackAllButton")
         saveButton <- self.FindControl<Button>("SaveButton")
@@ -181,15 +197,23 @@ type MainWindow() as self =
         diskRenameMenuItem <- self.FindControl<MenuItem>("DiskRenameMenuItem")
         diskDeleteMenuItem <- self.FindControl<MenuItem>("DiskDeleteMenuItem")
         codecBox <- self.FindControl<ComboBox>("CodecBox")
-        statusText <- self.FindControl<TextBlock>("StatusText")
+        explorerSelSlot <- self.FindControl<TextBlock>("ExplorerSelSlot")
+        explorerCountSlot <- self.FindControl<TextBlock>("ExplorerCountSlot")
+        explorerStatusSlot <- self.FindControl<TextBlock>("ExplorerStatusSlot")
+        packageSelSlot <- self.FindControl<TextBlock>("PackageSelSlot")
+        packageCountSlot <- self.FindControl<TextBlock>("PackageCountSlot")
+        packageStatusSlot <- self.FindControl<TextBlock>("PackageStatusSlot")
         self.InitializeScriptEditor()
         if not (isNull codecBox) && codecBox.SelectedIndex < 0 then
             codecBox.SelectedIndex <- 1 // LZ4
         self.InitDiskExplorer()
         self.WireExplorerPackageDragDrop()
+        self.RestoreExplorerMultiSelection()
         self.UpdateFileActionsEnabled()
         self.UpdateDiskActionsEnabled()
         self.UpdateSaveEnabled()
+        self.RefreshPaneStatusSlots()
+        self.Show("Add files, then Pak — or open an existing .mpx.", muteBrush)
 
         if not (isNull manifestSlugBox) then
             let onManifestSlugPress (sender: obj) (e: PointerPressedEventArgs) =
@@ -216,9 +240,7 @@ type MainWindow() as self =
                 self.NoteSize()
             if event.Property = Window.WindowStateProperty then
                 self.RememberState())
-        self.Closing.Add(fun _ ->
-            self.PersistMetadataUi()
-            self.RememberState())
+        self.Closing.Add(fun e -> self.OnMainWindowClosing e)
         self.Opened.Add(fun _ -> self.HandleStartupPackage() |> ignore)
 
     member private self.BoxText(box: TextBox) =
@@ -1083,11 +1105,34 @@ type MainWindow() as self =
         | Codec.Zstd -> "zstd"
         | other -> string other
 
+    member private self.SetSlot(slot: TextBlock, text: string, ?brush: IBrush) =
+        if not (isNull slot) then
+            slot.Text <- text
+            match brush with
+            | Some b -> slot.Foreground <- b
+            | None -> ()
+
+    member private self.RefreshPaneStatusSlots() =
+        let diskSel =
+            if isNull diskList then 0 else diskList.SelectedItems.Count
+        let itemCount (box: ListBox) =
+            if isNull box then 0 else box.ItemCount
+        let diskCount = itemCount diskList
+        let pkgSel =
+            if isNull fileList then 0 else fileList.SelectedItems.Count
+        let pkgCount = itemCount fileList
+        self.SetSlot(explorerSelSlot, $"{diskSel} sel")
+        self.SetSlot(explorerCountSlot, $"{diskCount} items")
+        self.SetSlot(packageSelSlot, $"{pkgSel} sel")
+        self.SetSlot(packageCountSlot, $"{pkgCount} items")
+
     member private self.Show(text: string, brush: IBrush) =
         let apply () =
-            if not (isNull statusText) then
-                statusText.Text <- text
-                statusText.Foreground <- brush
+            if explorerPaneActive then
+                self.SetSlot(explorerStatusSlot, text, brush)
+            else
+                self.SetSlot(packageStatusSlot, text, brush)
+            self.RefreshPaneStatusSlots()
         if Dispatcher.UIThread.CheckAccess() then
             apply ()
         else
@@ -1123,6 +1168,26 @@ type MainWindow() as self =
             Child = canvas,
             VerticalAlignment = VerticalAlignment.Center)
 
+    member private self.DialogButtonContent(label: string, symbol: Symbol) =
+        let row =
+            StackPanel(
+                Orientation = Orientation.Horizontal,
+                Spacing = 8.0,
+                HorizontalAlignment = HorizontalAlignment.Center)
+        row.Children.Add(
+            SymbolIcon(
+                Symbol = symbol,
+                IconVariant = IconVariant.Regular,
+                FontSize = 16.0,
+                Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
+                VerticalAlignment = VerticalAlignment.Center))
+        row.Children.Add(
+            TextBlock(
+                Text = label,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontWeight = FontWeight.SemiBold))
+        row :> obj
+
     member private self.DialogAccentButton(content: string) =
         Button(
             Content = content,
@@ -1138,6 +1203,12 @@ type MainWindow() as self =
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center)
 
+    member private self.DialogAccentIconButton(label: string, symbol: Symbol) =
+        let button = self.DialogAccentButton(label)
+        button.Content <- self.DialogButtonContent(label, symbol)
+        button.MinWidth <- 108.0
+        button
+
     member private self.DialogCommandButton(content: string) =
         Button(
             Content = content,
@@ -1152,6 +1223,12 @@ type MainWindow() as self =
             Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center)
+
+    member private self.DialogCommandIconButton(label: string, symbol: Symbol) =
+        let button = self.DialogCommandButton(label)
+        button.Content <- self.DialogButtonContent(label, symbol)
+        button.MinWidth <- 108.0
+        button
 
     member private self.DialogMessageRow(message: string) =
         let mark = self.DialogQuestionMark()
@@ -1227,7 +1304,7 @@ type MainWindow() as self =
         ok.Margin <- Thickness(0.0, 8.0, 0.0, 0.0)
         ok
 
-    member private self.ShowConfirmDialog(title: string, message: string) : Task<bool> =
+    member private self.ShowConfirmDialog(title: string, message: string, ?owner: Window) : Task<bool> =
         task {
             let yes = self.DialogAccentButton("Yes")
             let no = self.DialogCommandButton("No")
@@ -1237,39 +1314,189 @@ type MainWindow() as self =
             let dialog = self.WrapStudioDialog(title, root)
             yes.Click.Add(fun _ -> dialog.Close(true))
             no.Click.Add(fun _ -> dialog.Close(false))
-            return! dialog.ShowDialog<bool>(self)
+            let host = defaultArg owner (self :> Window)
+            return! dialog.ShowDialog<bool>(host)
         }
 
-    member private self.ShowRenameDialog(currentPath: string) : Task<string option> =
+    /// 0 = Save, 1 = Don't Save, 2 = Cancel
+    member private self.ShowSaveChangesDialog(documentName: string) : Task<int> =
+        task {
+            let message =
+                TextBlock(
+                    Text = $"Do you want to save changes to {documentName}?",
+                    Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
+                    FontSize = 15.0,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = Thickness(0.0, 0.0, 0.0, 18.0))
+            let saveBtn = self.DialogAccentButton("Save")
+            let discardBtn = self.DialogCommandButton("Don't Save")
+            discardBtn.MinWidth <- 110.0
+            let cancelBtn = self.DialogCommandButton("Cancel")
+            let buttons =
+                StackPanel(
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8.0,
+                    HorizontalAlignment = HorizontalAlignment.Right)
+            buttons.Children.Add(saveBtn)
+            buttons.Children.Add(discardBtn)
+            buttons.Children.Add(cancelBtn)
+            let root = StackPanel(Margin = Thickness(22.0))
+            root.Children.Add(message)
+            root.Children.Add(buttons)
+            let dialog = self.WrapStudioDialog("ModPak", root)
+            dialog.Width <- 420.0
+            saveBtn.Click.Add(fun _ -> dialog.Close(0))
+            discardBtn.Click.Add(fun _ -> dialog.Close(1))
+            cancelBtn.Click.Add(fun _ -> dialog.Close(2))
+            return! dialog.ShowDialog<int>(self)
+        }
+
+    member private self.TrySaveForClose() : Task<bool> =
+        task {
+            if packingInProgress then
+                return false
+            elif not (self.CanSavePackage()) then
+                return true
+            elif self.IncludeManifest() && self.BoxText manifestNameBox = "" then
+                self.Show("Name is required when Manifest is on.", errBrush)
+                return false
+            else
+                match packagePath with
+                | Some output ->
+                    packingInProgress <- true
+                    try
+                        match self.WritePackageTo output with
+                        | Error error ->
+                            self.Show(string error, errBrush)
+                            return false
+                        | Ok(next, codec, mani) ->
+                            self.Show(
+                                $"Saved with {self.CodecLabel codec}{mani} · {next.Entries.Length} files · {output}",
+                                okBrush)
+                            return true
+                    finally
+                        packingInProgress <- false
+                | None ->
+                    packingInProgress <- true
+                    try
+                        try
+                            let slug =
+                                match self.BoxText manifestSlugBox with
+                                | "" ->
+                                    match self.BoxText manifestNameBox with
+                                    | "" -> "package"
+                                    | name -> self.SlugFromName name
+                                | value -> value.ToLowerInvariant()
+                            let! startSave = self.TryStartFolder(config.SaveFileFolder)
+                            let saveOptions =
+                                FilePickerSaveOptions(
+                                    Title = "Save ModPak",
+                                    SuggestedFileName = slug + ModPakFormat.Extension,
+                                    DefaultExtension = "mpx",
+                                    FileTypeChoices =
+                                        [|
+                                            FilePickerFileType("ModPak", Patterns = [| "*.mpx" |])
+                                            FilePickerFileType("ModPak (all)", Patterns = ModPakFormat.OpenPatterns)
+                                        |]
+                                )
+                            if not (isNull startSave) then
+                                saveOptions.SuggestedStartLocation <- startSave
+                            let! target = self.StorageProvider.SaveFilePickerAsync(saveOptions)
+                            match target with
+                            | null -> return false
+                            | file ->
+                                let output = file.Path.LocalPath
+                                if String.IsNullOrWhiteSpace output then
+                                    return false
+                                else
+                                    config.RememberSaveFile output
+                                    match self.WritePackageTo output with
+                                    | Error error ->
+                                        self.Show(string error, errBrush)
+                                        return false
+                                    | Ok(next, codec, mani) ->
+                                        self.Show(
+                                            $"Saved with {self.CodecLabel codec}{mani} · {next.Entries.Length} files · {output}",
+                                            okBrush)
+                                        return true
+                        with error ->
+                            self.Show(error.Message, errBrush)
+                            return false
+                    finally
+                        packingInProgress <- false
+        }
+
+    member private self.FinishCloseAfterPrompt() =
+        allowClose <- true
+        closePromptInFlight <- false
+        self.Close()
+
+    member private self.OnMainWindowClosing(e: WindowClosingEventArgs) =
+        self.PersistMetadataUi()
+        self.RememberState()
+        if allowClose || not (self.CanSavePackage()) then
+            ()
+        elif closePromptInFlight then
+            e.Cancel <- true
+        else
+            // Never block the UI thread with ShowDialog().GetResult() here — it deadlocks Closing.
+            e.Cancel <- true
+            closePromptInFlight <- true
+            let documentName =
+                match packagePath with
+                | Some path when not (String.IsNullOrWhiteSpace path) -> Path.GetFileName path
+                | _ -> "Untitled"
+            async {
+                let! choice = self.ShowSaveChangesDialog documentName |> Async.AwaitTask
+                match choice with
+                | 0 ->
+                    let! saved = self.TrySaveForClose() |> Async.AwaitTask
+                    if saved then
+                        self.FinishCloseAfterPrompt()
+                    else
+                        closePromptInFlight <- false
+                | 1 -> self.FinishCloseAfterPrompt()
+                | _ -> closePromptInFlight <- false
+            }
+            |> Async.StartImmediate
+
+    member private self.ShowPathDialog
+        (
+            title: string,
+            promptText: string,
+            initialPath: string,
+            watermark: string,
+            confirmLabel: string
+        ) : Task<string option> =
         task {
             let prompt =
                 TextBlock(
-                    Text = "Enter a new path for this item.",
+                    Text = promptText,
                     Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
                     FontSize = 15.0,
                     TextWrapping = TextWrapping.Wrap,
                     Margin = Thickness(0.0, 0.0, 0.0, 14.0))
             let box =
                 TextBox(
-                    Text = currentPath,
-                    Watermark = "relative/path.ext",
+                    Text = initialPath,
+                    Watermark = watermark,
                     MinHeight = 36.0,
                     Margin = Thickness(0.0, 0.0, 0.0, 18.0))
-            let rename = self.DialogAccentButton("Rename")
+            let confirm = self.DialogAccentButton(confirmLabel)
             let cancel = self.DialogCommandButton("Cancel")
             let root = StackPanel(Margin = Thickness(22.0))
             root.Children.Add(prompt)
             root.Children.Add(box)
-            root.Children.Add(self.DialogButtonRow(rename, cancel))
-            let dialog = self.WrapStudioDialog("Rename", root)
-            rename.Click.Add(fun _ ->
-                let value = if isNull box.Text then "" else box.Text.Trim().Replace('\\', '/')
-                dialog.Close(value))
+            root.Children.Add(self.DialogButtonRow(confirm, cancel))
+            let dialog = self.WrapStudioDialog(title, root)
+            let submit () =
+                let value = if isNull box.Text then "" else box.Text.Trim()
+                dialog.Close(value)
+            confirm.Click.Add(fun _ -> submit ())
             cancel.Click.Add(fun _ -> dialog.Close(null))
             box.KeyDown.Add(fun e ->
                 if e.Key = Key.Enter || e.Key = Key.Return then
-                    let value = if isNull box.Text then "" else box.Text.Trim().Replace('\\', '/')
-                    dialog.Close(value)
+                    submit ()
                     e.Handled <- true)
             let! result = dialog.ShowDialog<string>(self)
             if String.IsNullOrWhiteSpace result then
@@ -1277,6 +1504,22 @@ type MainWindow() as self =
             else
                 return Some result
         }
+
+    member private self.ShowRenameDialog(currentPath: string) : Task<string option> =
+        self.ShowPathDialog(
+            "Rename",
+            "Enter a new path for this item.",
+            currentPath,
+            "relative/path.ext",
+            "Rename")
+
+    member private self.ShowMkdirDialog() : Task<string option> =
+        self.ShowPathDialog(
+            "Create directory",
+            "Enter the name of the new directory.",
+            "",
+            "Folder name",
+            "Create")
 
     member private self.ShowAlert(title: string, message: string, symbol: Symbol) =
         let icon =
@@ -1486,16 +1729,21 @@ type MainWindow() as self =
             entries
             |> List.choose (fun entry ->
                 let path = Pathing.normalize entry.RelativePath
-                let rest =
-                    if cwd = "" then path
-                    elif path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) then
-                        path.Substring(prefix.Length)
-                    else
-                        ""
-                if rest = "" || rest.Contains('/') then
+                let fileName = Path.GetFileName path
+                // Placeholder keeps empty dirs visible in the package tree.
+                if String.Equals(fileName, ".keep", StringComparison.OrdinalIgnoreCase) then
                     None
                 else
-                    Some entry)
+                    let rest =
+                        if cwd = "" then path
+                        elif path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) then
+                            path.Substring(prefix.Length)
+                        else
+                            ""
+                    if rest = "" || rest.Contains('/') then
+                        None
+                    else
+                        Some entry)
             |> List.sortBy (fun e -> (Pathing.normalize e.RelativePath).ToLowerInvariant())
         let parentRows = if cwd = "" then [] else [ self.ParentDirRow() ]
         let dirRows =
@@ -1522,6 +1770,7 @@ type MainWindow() as self =
             let rows = self.BuildExplorerRows()
             fileList.ItemsSource <- rows
             self.UpdateFileActionsEnabled()
+            self.RefreshPaneStatusSlots()
 
     member private self.NavigateExplorer(dirPath: string) =
         explorerDir <- Pathing.normalize dirPath
@@ -1726,6 +1975,8 @@ type MainWindow() as self =
                 diskDir <- None
                 self.SetDiskPathLabel "This PC"
                 diskList.ItemsSource <- self.BuildDiskDriveRows()
+        self.UpdateDiskActionsEnabled()
+        self.RefreshPaneStatusSlots()
 
     member private self.NavigateDisk(path: string) =
         if String.IsNullOrWhiteSpace path then
@@ -1776,10 +2027,62 @@ type MainWindow() as self =
         self.SelectedDiskRoots()
         |> List.filter File.Exists
 
-    member private self.SelectDiskListItemUnder(source: Avalonia.Visual) =
+    member private self.ExplorerMultiSelectionEnabled() =
+        match explorerMultiSelectionCheck with
+        | null -> config.ExplorerMultiSelection
+        | box -> box.IsChecked.GetValueOrDefault(false)
+
+    member private self.PackageMultiSelectionEnabled() =
+        match packageMultiSelectionCheck with
+        | null -> config.PackageMultiSelection
+        | box -> box.IsChecked.GetValueOrDefault(false)
+
+    member private self.SelectionModeFor(tcToggle: bool) =
+        if tcToggle then
+            SelectionMode.Multiple ||| SelectionMode.Toggle
+        else
+            SelectionMode.Multiple
+
+    member private self.ApplyExplorerSelectionMode() =
+        if not (isNull diskList) then
+            diskList.SelectionMode <- self.SelectionModeFor(self.ExplorerMultiSelectionEnabled())
+
+    member private self.ApplyPackageSelectionMode() =
+        if not (isNull fileList) then
+            fileList.SelectionMode <- self.SelectionModeFor(self.PackageMultiSelectionEnabled())
+
+    member private self.RestoreExplorerMultiSelection() =
+        suppressExplorerMultiSelectionPersist <- true
+        try
+            if not (isNull explorerMultiSelectionCheck) then
+                explorerMultiSelectionCheck.IsChecked <- Nullable(config.ExplorerMultiSelection)
+            if not (isNull packageMultiSelectionCheck) then
+                packageMultiSelectionCheck.IsChecked <- Nullable(config.PackageMultiSelection)
+        finally
+            suppressExplorerMultiSelectionPersist <- false
+        self.ApplyExplorerSelectionMode()
+        self.ApplyPackageSelectionMode()
+
+    member private self.ExplorerMultiSelectionChanged(_: obj, _: RoutedEventArgs) =
+        if not suppressExplorerMultiSelectionPersist then
+            let enabled = self.ExplorerMultiSelectionEnabled()
+            config.ExplorerMultiSelection <- enabled
+            config.Save()
+            self.ApplyExplorerSelectionMode()
+
+    member private self.PackageMultiSelectionChanged(_: obj, _: RoutedEventArgs) =
+        if not suppressExplorerMultiSelectionPersist then
+            let enabled = self.PackageMultiSelectionEnabled()
+            config.PackageMultiSelection <- enabled
+            config.Save()
+            self.ApplyPackageSelectionMode()
+
+    /// Prepare selection for drag / context menu without fighting ListBox multi-select rules.
+    member private self.SelectDiskListItemUnder(source: Avalonia.Visual, ?modifiers: KeyModifiers) =
         if isNull diskList || isNull source then
             ()
         else
+            let mods = defaultArg modifiers KeyModifiers.None
             let mutable walk = source
             let mutable listItem: ListBoxItem = null
             while not (isNull walk) && isNull listItem do
@@ -1793,8 +2096,15 @@ type MainWindow() as self =
                     |> Seq.cast<obj>
                     |> Seq.exists (fun item -> obj.ReferenceEquals(item, row))
                 if not already then
-                    diskList.SelectedItems.Clear()
-                    diskList.SelectedItems.Add(row) |> ignore
+                    let tcMode = self.ExplorerMultiSelectionEnabled()
+                    let multiGesture =
+                        mods.HasFlag KeyModifiers.Control
+                        || mods.HasFlag KeyModifiers.Shift
+                    // TC Toggle / Ctrl|Shift: leave selection to ListBox (avoid double-toggle).
+                    // Plain click: select the drag source now.
+                    if not tcMode && not multiGesture then
+                        diskList.SelectedItems.Clear()
+                        diskList.SelectedItems.Add(row) |> ignore
 
     member private self.ClearDiskDragState() =
         diskDragPress <- None
@@ -1820,7 +2130,8 @@ type MainWindow() as self =
     member private self.DiskListPointerPressed(_: obj, e: PointerPressedEventArgs) =
         if e.GetCurrentPoint(diskList).Properties.IsLeftButtonPressed then
             match e.Source with
-            | :? Avalonia.Visual as visual -> self.SelectDiskListItemUnder visual
+            | :? Avalonia.Visual as visual ->
+                self.SelectDiskListItemUnder(visual, e.KeyModifiers)
             | _ -> ()
             diskDragPress <- Some e
             diskDragOrigin <- Some(e.GetPosition diskList)
@@ -1908,6 +2219,14 @@ type MainWindow() as self =
             self.CopyDiskSelectionToPackage paths
         e.Handled <- true
 
+    /// Place copied paths under the currently open package folder (explorerDir).
+    member private self.PackageTargetRelative(rel: string) =
+        let cwd = Pathing.normalize explorerDir
+        let r = Pathing.normalize rel
+        if cwd = "" then r
+        elif r = "" then cwd
+        else cwd + "/" + r
+
     /// Expand selected files/folders into (fullPath, packageRelativePath) pairs.
     member private self.CollectDiskTreeFiles(roots: string list) : (string * string) list =
         let acc = ResizeArray<string * string>()
@@ -1915,7 +2234,9 @@ type MainWindow() as self =
             try
                 if File.Exists root then
                     let full = Path.GetFullPath root
-                    acc.Add(full, Pathing.normalize (Path.GetFileName full))
+                    let rel = self.PackageTargetRelative(Path.GetFileName full)
+                    if Pathing.isSafe rel then
+                        acc.Add(full, rel)
                 elif Directory.Exists root then
                     let full = Path.GetFullPath root
                     let rootName =
@@ -1925,6 +2246,7 @@ type MainWindow() as self =
                         let rel =
                             Path.Combine(rootName, Path.GetRelativePath(full, file))
                             |> Pathing.normalize
+                            |> self.PackageTargetRelative
                         if Pathing.isSafe rel then
                             acc.Add(Path.GetFullPath file, rel)
             with _ ->
@@ -1943,24 +2265,53 @@ type MainWindow() as self =
 
     member private self.ConfirmAndLoadPackage(path: string) =
         async {
-            let name = Path.GetFileName path
-            let message = $"Open this package?\n\n{name}\n{path}"
+            let message = $"Do you really want to open this package?\n\n{path}"
             let! confirmed = self.ShowConfirmDialog("Open package", message) |> Async.AwaitTask
             if confirmed then
                 self.TryLoadPackageFromPath path |> ignore
         }
         |> Async.StartImmediate
 
+    member private self.FileListItemFromVisual(source: Avalonia.Visual) : FileListItem option =
+        if isNull source then
+            None
+        else
+            let mutable walk = source
+            let mutable listItem: ListBoxItem = null
+            while not (isNull walk) && isNull listItem do
+                match walk with
+                | :? ListBoxItem as item -> listItem <- item
+                | _ -> walk <- walk.GetVisualParent()
+            match listItem with
+            | null -> None
+            | item ->
+                match item.DataContext with
+                | :? FileListItem as row -> Some row
+                | _ -> None
+
+    member private self.OpenDiskItem(row: FileListItem) =
+        if row.IsDirectory || row.IsParent then
+            self.NavigateDisk row.PathKey
+        elif File.Exists row.PathKey && self.IsModPakPackagePath row.PathKey then
+            self.ConfirmAndLoadPackage row.PathKey
+        elif File.Exists row.PathKey then
+            self.ShellOpen row.PathKey
+        else
+            self.Show("Select a disk item.", muteBrush)
+
     member private self.OpenSelectedDiskItem(_: obj, _: RoutedEventArgs) =
         match self.SelectedDiskItem() with
-        | Some row when row.IsDirectory || row.IsParent -> self.NavigateDisk row.PathKey
-        | Some row when File.Exists row.PathKey && self.IsModPakPackagePath row.PathKey ->
-            self.ConfirmAndLoadPackage row.PathKey
-        | Some row when File.Exists row.PathKey -> self.ShellOpen row.PathKey
-        | _ -> self.Show("Select a disk item.", muteBrush)
+        | Some row -> self.OpenDiskItem row
+        | None -> self.Show("Select a disk item.", muteBrush)
 
-    member private self.DiskListDoubleTapped(_: obj, _: TappedEventArgs) =
-        self.OpenSelectedDiskItem(null, null)
+    member private self.DiskListDoubleTapped(_: obj, e: TappedEventArgs) =
+        // Toggle multi-select flips selection twice on double-click — open the row under the pointer.
+        match e.Source with
+        | :? Avalonia.Visual as visual ->
+            match self.FileListItemFromVisual visual with
+            | Some row -> self.OpenDiskItem row
+            | None -> self.OpenSelectedDiskItem(null, null)
+        | _ -> self.OpenSelectedDiskItem(null, null)
 
     member private self.DiskListKeyDown(_: obj, e: KeyEventArgs) =
         if e.Key = Key.Enter || e.Key = Key.Return then
@@ -2026,6 +2377,14 @@ type MainWindow() as self =
             diskRenameMenuItem.IsEnabled <- canEdit
         if not (isNull diskDeleteMenuItem) then
             diskDeleteMenuItem.IsEnabled <- canDelete
+        self.RefreshPaneStatusSlots()
+
+    member private self.DiskListGotFocus(_: obj, _: GotFocusEventArgs) =
+        explorerPaneActive <- true
+
+    member private self.DiskListSelectionChanged(_: obj, _: SelectionChangedEventArgs) =
+        explorerPaneActive <- true
+        self.UpdateDiskActionsEnabled()
 
     member private self.DiskListContextRequested(_: obj, e: ContextRequestedEventArgs) =
         match e.Source with
@@ -2057,6 +2416,81 @@ type MainWindow() as self =
         if not (isNull diskList) then
             diskList.UnselectAll()
             self.UpdateDiskActionsEnabled()
+
+    member private self.IsSimpleFolderName(name: string) =
+        not (String.IsNullOrWhiteSpace name)
+        && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+        && not (name.Contains('\\') || name.Contains('/') || name.Contains(':'))
+        && name <> "."
+        && name <> ".."
+
+    member private self.MkdirDiskFolder(_: obj, _: RoutedEventArgs) =
+        match diskDir with
+        | None -> self.Show("Open a folder first.", muteBrush)
+        | Some parent when not (Directory.Exists parent) ->
+            self.Show("Open a folder first.", muteBrush)
+        | Some parent ->
+            async {
+                let! created = self.ShowMkdirDialog() |> Async.AwaitTask
+                match created with
+                | None -> ()
+                | Some raw ->
+                    let name = raw.Trim()
+                    if not (self.IsSimpleFolderName name) then
+                        self.Show("Enter a simple folder name.", errBrush)
+                    else
+                        let path = Path.Combine(parent, name)
+                        if Directory.Exists path then
+                            self.Show("Folder already exists.", muteBrush)
+                        elif File.Exists path then
+                            self.Show("A file with that name already exists.", errBrush)
+                        else
+                            try
+                                Directory.CreateDirectory path |> ignore
+                                self.RefreshDiskExplorer()
+                                self.Show($"Created {name}", okBrush)
+                            with error ->
+                                self.Show(error.Message, errBrush)
+            }
+            |> Async.StartImmediate
+
+    member private self.MkdirPackageFolder(_: obj, _: RoutedEventArgs) =
+        async {
+            let! created = self.ShowMkdirDialog() |> Async.AwaitTask
+            match created with
+            | None -> ()
+            | Some raw ->
+                let name = raw.Trim()
+                if not (self.IsSimpleFolderName name) then
+                    self.Show("Enter a simple folder name.", errBrush)
+                else
+                    let cwd = Pathing.normalize explorerDir
+                    let dirPath = if cwd = "" then name else cwd + "/" + name
+                    if not (Pathing.isSafe dirPath) then
+                        self.Show("Invalid name.", errBrush)
+                    elif self.IsVirtualDirectory dirPath
+                         || self.PathAlreadyUsed dirPath ""
+                         || self.PathAlreadyUsed (dirPath + "/.keep") "" then
+                        self.Show($"Folder already exists: {name}", errBrush)
+                    else
+                        let keepPath = dirPath + "/.keep"
+                        let bytes = Array.empty<byte>
+                        let entry =
+                            {
+                                RelativePath = keepPath
+                                Mime = "application/octet-stream"
+                                Bytes = bytes
+                                Codec = Codec.None
+                                Meta = FileMetas.ofBytes bytes
+                            }
+                        let pkg = self.EnsurePackage()
+                        package <- Some { pkg with Entries = pkg.Entries @ [ entry ] }
+                        self.EnsureFileCodec keepPath
+                        self.MarkDirty()
+                        self.RefreshAfterEntryEdit()
+                        self.Show($"Created {name}", okBrush)
+        }
+        |> Async.StartImmediate
 
     member private self.RenameSelectedDiskItem(_: obj, _: RoutedEventArgs) =
         match self.SelectedDiskItem() with
@@ -2162,88 +2596,207 @@ type MainWindow() as self =
         if not (isNull metadataTabs) then
             metadataTabs.SelectedIndex <- 0
 
-    member private self.CopyDiskSelectionToPackage(roots: string list) =
-        let logItems = ObservableCollection<string>()
-        let bar =
-            ProgressBar(
-                Minimum = 0.0,
-                Maximum = 100.0,
-                Height = 12.0,
-                Margin = Thickness(0.0, 0.0, 0.0, 12.0))
-        let status =
-            TextBlock(
-                Text = "Preparing…",
-                Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
-                FontSize = 13.0,
-                Margin = Thickness(0.0, 0.0, 0.0, 10.0),
-                TextWrapping = TextWrapping.Wrap)
-        let log =
-            ListBox(
-                ItemsSource = logItems,
-                Height = 200.0,
-                Margin = Thickness(0.0, 0.0, 0.0, 12.0))
-        let closeBtn = self.DialogAccentButton("Close")
-        closeBtn.IsEnabled <- false
-        closeBtn.HorizontalAlignment <- HorizontalAlignment.Right
-        let panel = StackPanel(Margin = Thickness(22.0))
-        panel.Children.Add(status)
-        panel.Children.Add(bar)
-        panel.Children.Add(log)
-        panel.Children.Add(closeBtn)
-        let dialog = self.WrapStudioDialog("Adding to package", panel)
-        closeBtn.Click.Add(fun _ -> dialog.Close())
-        let work =
-            Task.Run(fun () ->
-                try
-                    let files = self.CollectDiskTreeFiles roots
-                    if files.IsEmpty then
-                        Dispatcher.UIThread.Post(fun () ->
-                            status.Text <- "No files found."
-                            bar.Value <- 100.0
-                            closeBtn.IsEnabled <- true)
-                    else
-                        let total = files.Length
-                        let built = ResizeArray<ModPakEntry>()
-                        let abs = ResizeArray<string>()
-                        let mutable index = 0
-                        for full, rel in files do
-                            index <- index + 1
-                            let n = index
-                            Dispatcher.UIThread.Post(fun () ->
-                                status.Text <- $"Copying {n} / {total}"
-                                bar.Value <- float n / float total * 100.0
-                                logItems.Add rel
-                                if logItems.Count > 0 then
-                                    log.ScrollIntoView(logItems.[logItems.Count - 1]))
+    member private self.ExistingPackagePathKeys() : Set<string> =
+        self.AllExplorerFileEntries()
+        |> List.map (fun entry -> self.CodecKey entry.RelativePath)
+        |> Set.ofList
+
+    member private self.AskOverwriteOnUi(owner: Window, rel: string) : bool =
+        Dispatcher.UIThread
+            .InvokeAsync(fun () ->
+                self.ShowConfirmDialog("Overwrite", $"Overwrite existing file?\n\n{rel}", owner)
+                    .GetAwaiter()
+                    .GetResult())
+            .GetAwaiter()
+            .GetResult()
+
+    member private self.DeleteDiskRootsQuiet(roots: string list) =
+        let mutable removed = 0
+        for path in roots do
+            try
+                if Directory.Exists path then
+                    Directory.Delete(path, true)
+                    removed <- removed + 1
+                elif File.Exists path then
+                    File.Delete path
+                    removed <- removed + 1
+            with _ ->
+                ()
+        if removed > 0 then
+            self.RefreshDiskExplorer()
+        removed
+
+    member private self.CopyDiskSelectionToPackage(roots: string list, ?deleteSources: bool) =
+        let moveMode = defaultArg deleteSources false
+        let files = self.CollectDiskTreeFiles roots
+        if files.IsEmpty then
+            self.Show("No files found to add.", muteBrush)
+        else
+            let logItems = ObservableCollection<string>()
+            for _, rel in files do
+                logItems.Add rel
+            let bar =
+                ProgressBar(
+                    Minimum = 0.0,
+                    Maximum = 100.0,
+                    Height = 12.0,
+                    Value = 0.0,
+                    Margin = Thickness(0.0, 0.0, 0.0, 12.0))
+            let actionLabel = if moveMode then "Move" else "Copy"
+            let status =
+                TextBlock(
+                    Text = $"{files.Length} file(s) ready — press {actionLabel}.",
+                    Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
+                    FontSize = 13.0,
+                    Margin = Thickness(0.0, 0.0, 0.0, 10.0),
+                    TextWrapping = TextWrapping.Wrap)
+            let log =
+                ListBox(
+                    ItemsSource = logItems,
+                    Height = 200.0,
+                    Margin = Thickness(0.0, 0.0, 0.0, 12.0))
+            let overwriteCheck =
+                CheckBox(
+                    Content = "Overwrite existing files",
+                    IsChecked = Nullable(config.OverwriteExistingFiles),
+                    Margin = Thickness(0.0, 0.0, 0.0, 14.0))
+            overwriteCheck.IsCheckedChanged.Add(fun _ ->
+                let enabled = overwriteCheck.IsChecked.GetValueOrDefault(false)
+                config.OverwriteExistingFiles <- enabled
+                config.Save())
+            let cancelBtn = self.DialogCommandIconButton("Cancel", Symbol.Dismiss)
+            let copyBtn =
+                self.DialogAccentIconButton(
+                    actionLabel,
+                    if moveMode then Symbol.ArrowMove else Symbol.Copy)
+            let buttons =
+                DockPanel(LastChildFill = false, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
+            DockPanel.SetDock(cancelBtn, Dock.Left)
+            DockPanel.SetDock(copyBtn, Dock.Right)
+            buttons.Children.Add(cancelBtn)
+            buttons.Children.Add(copyBtn)
+            let panel = StackPanel(Margin = Thickness(22.0))
+            panel.Children.Add(status)
+            panel.Children.Add(bar)
+            panel.Children.Add(log)
+            panel.Children.Add(overwriteCheck)
+            panel.Children.Add(buttons)
+            let dialogTitle = if moveMode then "Moving to package" else "Adding to package"
+            let dialog = self.WrapStudioDialog(dialogTitle, panel)
+            dialog.Width <- 480.0
+            let cts = new CancellationTokenSource()
+            let mutable copying = false
+            let mutable finished = false
+            cancelBtn.Click.Add(fun _ ->
+                if copying && not finished then
+                    cts.Cancel()
+                    status.Text <- "Cancelling…"
+                    cancelBtn.IsEnabled <- false
+                else
+                    dialog.Close())
+            copyBtn.Click.Add(fun _ ->
+                if copying then
+                    ()
+                else
+                    copying <- true
+                    copyBtn.IsEnabled <- false
+                    overwriteCheck.IsEnabled <- false
+                    status.Text <- if moveMode then "Moving…" else "Copying…"
+                    let overwrite = overwriteCheck.IsChecked.GetValueOrDefault(false)
+                    let existingKeys = self.ExistingPackagePathKeys()
+                    ignore (
+                        Task.Run(fun () ->
                             try
-                                let bytes = File.ReadAllBytes full
-                                built.Add(
-                                    {
-                                        RelativePath = rel
-                                        Mime = Mime.ofPath rel
-                                        Bytes = bytes
-                                        Codec = Codec.Lz4
-                                        Meta = FileMetas.ofFilePath full bytes
-                                    })
-                                abs.Add full
+                                let total = files.Length
+                                let built = ResizeArray<ModPakEntry>()
+                                let abs = ResizeArray<string>()
+                                let mutable index = 0
+                                let mutable skipped = 0
+                                let mutable cancelled = false
+                                for full, rel in files do
+                                    if cts.IsCancellationRequested then
+                                        cancelled <- true
+                                    elif cancelled then
+                                        ()
+                                    else
+                                        index <- index + 1
+                                        let n = index
+                                        let key = self.CodecKey rel
+                                        let exists = existingKeys.Contains key
+                                        let take =
+                                            if not exists then
+                                                true
+                                            elif overwrite then
+                                                true
+                                            else
+                                                self.AskOverwriteOnUi(dialog, rel)
+                                        if cts.IsCancellationRequested then
+                                            cancelled <- true
+                                        else
+                                            Dispatcher.UIThread.Post(fun () ->
+                                                status.Text <-
+                                                    if take then
+                                                        if moveMode then $"Moving {n} / {total}"
+                                                        else $"Copying {n} / {total}"
+                                                    else $"Skipping {n} / {total}"
+                                                bar.Value <- float n / float total * 100.0
+                                                if logItems.Count > 0 then
+                                                    let focus = min (n - 1) (logItems.Count - 1)
+                                                    log.ScrollIntoView(logItems.[focus]))
+                                            if not take then
+                                                skipped <- skipped + 1
+                                                Dispatcher.UIThread.Post(fun () ->
+                                                    logItems.Add($"· skipped {rel}"))
+                                            else
+                                                try
+                                                    let bytes = File.ReadAllBytes full
+                                                    if cts.IsCancellationRequested then
+                                                        cancelled <- true
+                                                    else
+                                                        built.Add(
+                                                            {
+                                                                RelativePath = rel
+                                                                Mime = Mime.ofPath rel
+                                                                Bytes = bytes
+                                                                Codec = Codec.Lz4
+                                                                Meta = FileMetas.ofFilePath full bytes
+                                                            })
+                                                        abs.Add full
+                                                        Dispatcher.UIThread.Post(fun () ->
+                                                            logItems.Add($"✓ {rel}"))
+                                                with ex ->
+                                                    Dispatcher.UIThread.Post(fun () ->
+                                                        logItems.Add($"! {rel}: {ex.Message}"))
+                                let entries = built |> Seq.toList
+                                let paths = abs |> Seq.toList
+                                Dispatcher.UIThread.Post(fun () ->
+                                    finished <- true
+                                    cancelBtn.IsEnabled <- true
+                                    cancelBtn.Content <- self.DialogButtonContent("Close", Symbol.Dismiss)
+                                    if cancelled then
+                                        status.Text <- "Cancelled — nothing added."
+                                        bar.Value <- 100.0
+                                    else
+                                        self.MergeBuiltEntriesIntoPackage(entries, paths)
+                                        if moveMode && entries.Length > 0 then
+                                            let deleted = self.DeleteDiskRootsQuiet roots
+                                            status.Text <-
+                                                $"Done — {entries.Length} file(s) moved, {skipped} skipped, {deleted} source(s) removed."
+                                            self.Show($"Moved {entries.Length} file(s) into package.", okBrush)
+                                        else
+                                            status.Text <-
+                                                $"Done — {entries.Length} file(s) added, {skipped} skipped."
+                                            self.Show($"Added {entries.Length} file(s) to package.", okBrush)
+                                        bar.Value <- 100.0)
                             with ex ->
-                                let msg = $"! {rel}: {ex.Message}"
-                                Dispatcher.UIThread.Post(fun () -> logItems.Add msg)
-                        let entries = built |> Seq.toList
-                        let paths = abs |> Seq.toList
-                        Dispatcher.UIThread.Post(fun () ->
-                            self.MergeBuiltEntriesIntoPackage(entries, paths)
-                            status.Text <- $"Done — {entries.Length} file(s) added."
-                            bar.Value <- 100.0
-                            closeBtn.IsEnabled <- true
-                            self.Show($"Added {entries.Length} file(s) to package.", okBrush))
-                with ex ->
-                    Dispatcher.UIThread.Post(fun () ->
-                        status.Text <- $"Failed: {ex.Message}"
-                        closeBtn.IsEnabled <- true
-                        self.Show(ex.Message, errBrush)))
-        ignore work
-        dialog.ShowDialog(self) |> ignore
+                                Dispatcher.UIThread.Post(fun () ->
+                                    finished <- true
+                                    cancelBtn.IsEnabled <- true
+                                    cancelBtn.Content <- self.DialogButtonContent("Close", Symbol.Dismiss)
+                                    status.Text <- $"Failed: {ex.Message}"
+                                    self.Show(ex.Message, errBrush)))))
+            dialog.ShowDialog(self) |> ignore
+            cts.Dispose()
 
     member private self.CycleFileCodec(sender: obj, e: RoutedEventArgs) =
         e.Handled <- true
@@ -2274,27 +2827,7 @@ type MainWindow() as self =
     member private self.StageFilesIntoPackage(paths: string list) =
         match paths with
         | [] -> ()
-        | head :: _ ->
-            config.RememberAddFile head
-            // Keep existing package Entries — staged paths merge on save / explorer.
-            pendingPaths <-
-                (pendingPaths @ paths)
-                |> List.map Path.GetFullPath
-                |> List.distinct
-                |> List.sort
-            match Pack.entriesFromFiles paths with
-            | Ok files ->
-                for entry in files do
-                    self.EnsureFileCodec entry.RelativePath
-            | Error error -> self.Show(string error, errBrush)
-            self.RefreshExplorer()
-            self.MarkDirty()
-            let added = paths.Length
-            let total =
-                match self.MergePackageAndPendingEntries() with
-                | Ok entries -> entries.Length
-                | Error _ -> added
-            self.Show($"Added {added} file(s) — package now has {total}.", okBrush)
+        | _ -> self.CopyDiskSelectionToPackage paths
 
     member private self.RefreshPendingList() =
         match pendingPaths with
@@ -2475,6 +3008,7 @@ type MainWindow() as self =
         if not (isNull infoButton) then
             infoButton.IsEnabled <- packagePath.IsSome
         self.UpdateSaveEnabled()
+        self.RefreshPaneStatusSlots()
 
     member private self.SelectListItemUnder(source: Avalonia.Visual) =
         if isNull fileList || isNull source then
@@ -2496,7 +3030,11 @@ type MainWindow() as self =
                     fileList.SelectedItems.Clear()
                     fileList.SelectedItems.Add(row) |> ignore
 
+    member private self.FileListGotFocus(_: obj, _: GotFocusEventArgs) =
+        explorerPaneActive <- false
+
     member private self.FileListSelectionChanged(_: obj, _: SelectionChangedEventArgs) =
+        explorerPaneActive <- false
         self.UpdateFileActionsEnabled()
 
     member private self.FileListContextRequested(_: obj, e: ContextRequestedEventArgs) =
@@ -2673,6 +3211,59 @@ type MainWindow() as self =
             |> ignore
         | _ -> self.Show("Select one item to rename.", muteBrush)
 
+    member private self.RemoveSelectedEntries(selected: string list) =
+        let mutable removed = 0
+        if not pendingPaths.IsEmpty then
+            let removeFulls =
+                match Pack.entriesFromFiles pendingPaths with
+                | Error _ -> Set.empty
+                | Ok entries ->
+                    entries
+                    |> List.fold
+                        (fun acc entry ->
+                            let orig = Pathing.normalize entry.RelativePath
+                            let shown =
+                                match pendingRenames.TryFind(self.CodecKey orig) with
+                                | Some r -> Pathing.normalize r
+                                | None -> orig
+                            if self.PathMatchesSelection(shown, selected)
+                               || self.PathMatchesSelection(orig, selected) then
+                                match Pack.tryFullPath pendingPaths orig with
+                                | Some full -> Set.add full acc
+                                | None -> acc
+                            else
+                                acc)
+                        Set.empty
+            removed <- removed + removeFulls.Count
+            pendingPaths <-
+                pendingPaths
+                |> List.filter (fun p -> not (removeFulls.Contains(Path.GetFullPath p)))
+            pendingRenames <-
+                pendingRenames
+                |> Map.filter (fun oldKey newPath ->
+                    not (self.PathMatchesSelection(oldKey, selected))
+                    && not (self.PathMatchesSelection(newPath, selected)))
+            fileCodecs <-
+                fileCodecs
+                |> Map.filter (fun key _ -> not (self.PathMatchesSelection(key, selected)))
+        match package with
+        | Some pkg ->
+            let kept, dropped =
+                pkg.Entries
+                |> List.partition (fun e ->
+                    not (self.PathMatchesSelection(e.RelativePath, selected)))
+            removed <- removed + dropped.Length
+            package <- Some { pkg with Entries = kept }
+            fileCodecs <-
+                fileCodecs
+                |> Map.filter (fun key _ -> not (self.PathMatchesSelection(key, selected)))
+        | None -> ()
+        if pendingPaths.IsEmpty && package.IsNone then
+            explorerDir <- ""
+        self.RefreshAfterEntryEdit()
+        self.MarkDirty()
+        removed
+
     member private self.DeleteSelectedFiles(_: obj, _: RoutedEventArgs) =
         let selected = self.SelectedEntryPathKeys()
         if selected.IsEmpty then
@@ -2694,58 +3285,9 @@ type MainWindow() as self =
                         $"Do you really want to delete these {selected.Length} items?"
                 let! confirmed = self.ShowConfirmDialog("Delete", message)
                 if confirmed then
-                    let mutable removed = 0
-                    if not pendingPaths.IsEmpty then
-                        let removeFulls =
-                            match Pack.entriesFromFiles pendingPaths with
-                            | Error _ -> Set.empty
-                            | Ok entries ->
-                                entries
-                                |> List.fold
-                                    (fun acc entry ->
-                                        let orig = Pathing.normalize entry.RelativePath
-                                        let shown =
-                                            match pendingRenames.TryFind(self.CodecKey orig) with
-                                            | Some r -> Pathing.normalize r
-                                            | None -> orig
-                                        if self.PathMatchesSelection(shown, selected)
-                                           || self.PathMatchesSelection(orig, selected) then
-                                            match Pack.tryFullPath pendingPaths orig with
-                                            | Some full -> Set.add full acc
-                                            | None -> acc
-                                        else
-                                            acc)
-                                    Set.empty
-                        removed <- removed + removeFulls.Count
-                        pendingPaths <-
-                            pendingPaths
-                            |> List.filter (fun p -> not (removeFulls.Contains(Path.GetFullPath p)))
-                        pendingRenames <-
-                            pendingRenames
-                            |> Map.filter (fun oldKey newPath ->
-                                not (self.PathMatchesSelection(oldKey, selected))
-                                && not (self.PathMatchesSelection(newPath, selected)))
-                        fileCodecs <-
-                            fileCodecs
-                            |> Map.filter (fun key _ -> not (self.PathMatchesSelection(key, selected)))
-                    match package with
-                    | Some pkg ->
-                        let kept, dropped =
-                            pkg.Entries
-                            |> List.partition (fun e ->
-                                not (self.PathMatchesSelection(e.RelativePath, selected)))
-                        removed <- removed + dropped.Length
-                        package <- Some { pkg with Entries = kept }
-                        fileCodecs <-
-                            fileCodecs
-                            |> Map.filter (fun key _ -> not (self.PathMatchesSelection(key, selected)))
-                    | None -> ()
-                    if pendingPaths.IsEmpty && package.IsNone then
-                        explorerDir <- ""
-                    self.RefreshAfterEntryEdit()
+                    let removed = self.RemoveSelectedEntries selected
                     let label = if removed = 1 then "item" else "items"
                     self.Show($"Deleted {removed} {label}.", okBrush)
-                    self.MarkDirty()
             }
             |> ignore
 
@@ -2775,14 +3317,22 @@ type MainWindow() as self =
             self.UpdateFileActionsEnabled()
 
     member private self.FileListDoubleTapped(sender: obj, e: TappedEventArgs) =
-        let mutable walk = e.Source :?> Avalonia.Visual
+        let mutable walk =
+            match e.Source with
+            | :? Avalonia.Visual as visual -> visual
+            | _ -> null
         let mutable fromCodec = false
         while not (isNull walk) && not fromCodec do
             match walk with
             | :? Button as button when button.Classes.Contains("codec-chip") -> fromCodec <- true
             | _ -> walk <- walk.GetVisualParent()
         if not fromCodec then
-            self.OpenSelectedFile(sender, e)
+            match e.Source with
+            | :? Avalonia.Visual as visual ->
+                match self.FileListItemFromVisual visual with
+                | Some row -> self.OpenExplorerItem row
+                | None -> self.OpenSelectedFile(sender, e)
+            | _ -> self.OpenSelectedFile(sender, e)
 
     member private self.FileListKeyDown(sender: obj, e: KeyEventArgs) =
         if e.Key = Key.Enter || e.Key = Key.Return then
@@ -2795,11 +3345,10 @@ type MainWindow() as self =
                     if slash < 0 then "" else explorerDir.Substring(0, slash))
                 e.Handled <- true
 
-    member private self.OpenSelectedFile(_: obj, _: RoutedEventArgs) =
-        match self.SelectedExplorerItem() with
-        | Some row when row.IsDirectory || row.IsParent ->
+    member private self.OpenExplorerItem(row: FileListItem) =
+        if row.IsDirectory || row.IsParent then
             self.NavigateExplorer row.PathKey
-        | Some row ->
+        else
             let pathKey = row.PathKey
             match Pack.tryFullPath pendingPaths pathKey with
             | Some diskPath -> self.ShellOpen diskPath
@@ -2821,6 +3370,10 @@ type MainWindow() as self =
                                 self.Show($"Could not prepare {pathKey}.", errBrush)
                     with error ->
                         self.Show(error.Message, errBrush)
+
+    member private self.OpenSelectedFile(_: obj, _: RoutedEventArgs) =
+        match self.SelectedExplorerItem() with
+        | Some row -> self.OpenExplorerItem row
         | None -> self.Show("Select one item to open.", muteBrush)
 
     member private self.TryResolveEntry(pathKey: string) : ModPakEntry option =
@@ -2873,6 +3426,22 @@ type MainWindow() as self =
         else
             $"{ext.TrimStart('.').ToUpperInvariant()} File{extPart}"
 
+    member private self.FormatUnixPermissions(mode: uint16) =
+        let bit mask ch = if (mode &&& mask) <> 0us then ch else '-'
+        let symbolic =
+            System.String [|
+                bit 0o400us 'r'
+                bit 0o200us 'w'
+                bit 0o100us 'x'
+                bit 0o040us 'r'
+                bit 0o020us 'w'
+                bit 0o010us 'x'
+                bit 0o004us 'r'
+                bit 0o002us 'w'
+                bit 0o001us 'x'
+            |]
+        $"0o{Convert.ToString(int mode, 8)} (-{symbolic})"
+
     member private self.PropertiesSeparator() =
         Border(
             Height = 1.0,
@@ -2916,6 +3485,17 @@ type MainWindow() as self =
                 }
         | None -> None
 
+    member private self.BuildContainerTabContent(pkg: ModPakPackage) =
+        let major, minor = self.ContainerVersion()
+        let panel = StackPanel(Spacing = 0.0, Margin = Thickness(4.0, 8.0, 4.0, 0.0))
+        panel.Children.Add(self.PropertiesField("Format:", "ModPak"))
+        panel.Children.Add(self.PropertiesField("Container:", "MODPAK64"))
+        panel.Children.Add(self.PropertiesField("Version:", $"{major}.{minor}"))
+        panel.Children.Add(self.PropertiesSeparator())
+        for id, n in self.ChunkCounts pkg do
+            panel.Children.Add(self.PropertiesField($"{id}:", string n))
+        panel :> Control
+
     member private self.ShowPropertiesDialog
         (
             title: string,
@@ -2932,7 +3512,9 @@ type MainWindow() as self =
             hidden: bool,
             extraRows: (string * string) list,
             canEditAttrs: bool,
-            onApply: (string * bool * bool) -> bool
+            onApply: (string * bool * bool) -> bool,
+            ?unixPermissions: string,
+            ?containerTab: Control
         ) =
         let nameBox =
             TextBox(
@@ -2977,18 +3559,23 @@ type MainWindow() as self =
                 Content = "Hidden",
                 IsChecked = Nullable(hidden),
                 IsEnabled = canEditAttrs)
-        let attrsRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = 8.0)
-        let attrsLabel =
-            TextBlock(
-                Text = "Attributes:",
-                FontSize = 12.0,
-                Foreground = SolidColorBrush(Color.Parse "#A89888"),
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                Width = 118.0)
-        attrsRow.Children.Add(attrsLabel)
-        attrsRow.Children.Add(readOnlyBox)
-        attrsRow.Children.Add(hiddenBox)
-        body.Children.Add(attrsRow)
+        match unixPermissions with
+        | Some perms ->
+            body.Children.Add(self.PropertiesField("Permissions:", perms))
+        | None when canEditAttrs ->
+            let attrsRow = StackPanel(Orientation = Orientation.Horizontal, Spacing = 8.0)
+            let attrsLabel =
+                TextBlock(
+                    Text = "Attributes:",
+                    FontSize = 12.0,
+                    Foreground = SolidColorBrush(Color.Parse "#A89888"),
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                    Width = 118.0)
+            attrsRow.Children.Add(attrsLabel)
+            attrsRow.Children.Add(readOnlyBox)
+            attrsRow.Children.Add(hiddenBox)
+            body.Children.Add(attrsRow)
+        | None -> ()
 
         let ok = self.DialogAccentButton("OK")
         let cancel = self.DialogCommandButton("Cancel")
@@ -3003,12 +3590,13 @@ type MainWindow() as self =
             let hidNow = hiddenBox.IsChecked.GetValueOrDefault(false)
             apply.IsEnabled <-
                 not (String.Equals(nameNow, initialName, StringComparison.Ordinal))
-                || roNow <> readOnly
-                || hidNow <> hidden
+                || (canEditAttrs
+                    && (roNow <> readOnly || hidNow <> hidden))
 
         nameBox.TextChanged.Add(fun _ -> markDirty ())
-        readOnlyBox.IsCheckedChanged.Add(fun _ -> markDirty ())
-        hiddenBox.IsCheckedChanged.Add(fun _ -> markDirty ())
+        if canEditAttrs then
+            readOnlyBox.IsCheckedChanged.Add(fun _ -> markDirty ())
+            hiddenBox.IsCheckedChanged.Add(fun _ -> markDirty ())
 
         let tryApply () =
             let nameNow = if isNull nameBox.Text then "" else nameBox.Text.Trim()
@@ -3020,10 +3608,28 @@ type MainWindow() as self =
             else
                 false
 
+        let mainContent: Control =
+            match containerTab with
+            | None -> ScrollViewer(Content = body, MaxHeight = 520.0) :> Control
+            | Some tabBody ->
+                let tabs = TabControl(Margin = Thickness(0.0, 0.0, 0.0, 0.0))
+                tabs.Items.Add(
+                    TabItem(
+                        Header = "General",
+                        Content = ScrollViewer(Content = body, MaxHeight = 480.0)))
+                |> ignore
+                tabs.Items.Add(
+                    TabItem(
+                        Header = "Container",
+                        Content = ScrollViewer(Content = tabBody, MaxHeight = 480.0)))
+                |> ignore
+                tabs.SelectedIndex <- 0
+                tabs :> Control
+
         let root = DockPanel()
         DockPanel.SetDock(buttons, Avalonia.Controls.Dock.Bottom)
         root.Children.Add(buttons)
-        root.Children.Add(ScrollViewer(Content = body, MaxHeight = 520.0))
+        root.Children.Add(mainContent)
 
         let dialog =
             Window(
@@ -3045,19 +3651,17 @@ type MainWindow() as self =
     member private self.ShowEntryProperties(entry: ModPakEntry) =
         let meta = entry.Meta
         let name = Path.GetFileName entry.RelativePath
-        let parent =
+        let location =
             match Path.GetDirectoryName entry.RelativePath with
             | null | "" -> "/"
             | dir ->
                 let normalized = Pathing.normalize dir
                 if String.IsNullOrWhiteSpace normalized then "/" else normalized
-        let location =
-            match packagePath with
-            | Some path -> $"{Path.GetDirectoryName path}  ·  {parent}"
-            | None -> parent
         let sizeBytes = int64 entry.Bytes.Length
         let unpacked = int64 meta.UnpackedSize
-        let readOnly = meta.Permissions = 0o444us
+        let container =
+            self.TryPackageForInfo()
+            |> Option.map self.BuildContainerTabContent
         self.ShowPropertiesDialog(
             $"{name} Properties",
             icons.GetIcon entry.RelativePath,
@@ -3069,7 +3673,7 @@ type MainWindow() as self =
             self.FormatUnixMs meta.CreatedTime,
             self.FormatUnixMs meta.ModifiedTime,
             self.FormatUnixMs meta.AccessedTime,
-            readOnly,
+            false,
             false,
             [
                 "Compression:", self.CodecLabel entry.Codec
@@ -3077,7 +3681,7 @@ type MainWindow() as self =
                 "Path:", entry.RelativePath
             ],
             false,
-            fun (nextName, _, _) ->
+            (fun (nextName, _, _) ->
                 if String.Equals(nextName, name, StringComparison.Ordinal) then
                     true
                 elif String.IsNullOrWhiteSpace nextName
@@ -3125,7 +3729,9 @@ type MainWindow() as self =
                             self.MarkDirty()
                             self.RefreshAfterEntryEdit()
                             self.Show($"Renamed to {nextPath}", okBrush)
-                            true)
+                            true),
+            unixPermissions = self.FormatUnixPermissions meta.Permissions,
+            ?containerTab = container)
 
     member private self.ShowContainerProperties(pkg: ModPakPackage) =
         let name =
@@ -3155,14 +3761,6 @@ type MainWindow() as self =
                     pkg.Entries
                     |> List.sumBy (fun e -> int64 e.Bytes.Length)
                 total, "—", "—", "—"
-        let major, minor = self.ContainerVersion()
-        let extra =
-            [
-                "Format:", "ModPak"
-                "Container:", "MODPAK64"
-                "Version:", $"{major}.{minor}"
-            ]
-            @ (self.ChunkCounts pkg |> List.map (fun (id, n) -> $"{id}:", string n))
         let logo = new Bitmap(AssetLoader.Open(Uri("avares://ModPak.App/Assets/KI.png"))) :> IImage
         self.ShowPropertiesDialog(
             $"{titleName} Properties",
@@ -3177,128 +3775,16 @@ type MainWindow() as self =
             accessed,
             false,
             false,
-            extra,
+            [],
             false,
-            fun _ -> true)
+            (fun _ -> true),
+            containerTab = self.BuildContainerTabContent pkg)
 
     member private self.ShowDiskInfoDialog(_: obj, _: RoutedEventArgs) =
         match self.SelectedDiskItem() with
         | Some row when not row.IsParent && (File.Exists row.PathKey || Directory.Exists row.PathKey) ->
-            let path = row.PathKey
-            let isDir = Directory.Exists path
-            let name = Path.GetFileName(path.TrimEnd('\\', '/'))
-            let displayName =
-                if String.IsNullOrWhiteSpace name then path else name
-            let parent = Path.GetDirectoryName path
-            let location =
-                if String.IsNullOrWhiteSpace parent then path else parent
-            let icon =
-                if isDir then icons.GetFolderIcon()
-                else icons.GetIcon path
-            let typeLabel =
-                if isDir then "File folder"
-                else self.FileTypeLabel(path, Mime.ofPath path)
-            let sizeBytes, sizeOnDisk, created, modified, accessed, readOnly, hidden =
-                try
-                    if isDir then
-                        let info = DirectoryInfo path
-                        let attrs = info.Attributes
-                        0L,
-                        0L,
-                        info.CreationTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
-                        info.LastWriteTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
-                        info.LastAccessTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
-                        attrs.HasFlag FileAttributes.ReadOnly,
-                        attrs.HasFlag FileAttributes.Hidden
-                    else
-                        let info = FileInfo path
-                        let attrs = info.Attributes
-                        info.Length,
-                        info.Length,
-                        info.CreationTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
-                        info.LastWriteTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
-                        info.LastAccessTime.ToString("dddd d MMMM yyyy, HH:mm:ss"),
-                        attrs.HasFlag FileAttributes.ReadOnly,
-                        attrs.HasFlag FileAttributes.Hidden
-                with _ ->
-                    0L, 0L, "—", "—", "—", false, false
-            let sizeText =
-                if isDir then "—" else self.FormatBytesDetailed sizeBytes
-            let sizeOnDiskText =
-                if isDir then "—" else self.FormatBytesDetailed sizeOnDisk
-            self.ShowPropertiesDialog(
-                $"{displayName} Properties",
-                icon,
-                displayName,
-                typeLabel,
-                location,
-                sizeText,
-                sizeOnDiskText,
-                created,
-                modified,
-                accessed,
-                readOnly,
-                hidden,
-                [],
-                true,
-                fun (nextName, nextReadOnly, nextHidden) ->
-                    try
-                        let mutable current = path
-                        if not (String.Equals(nextName, displayName, StringComparison.Ordinal)) then
-                            if String.IsNullOrWhiteSpace nextName
-                               || nextName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-                               || nextName.Contains('\\')
-                               || nextName.Contains('/') then
-                                self.Show("Invalid name.", errBrush)
-                                false
-                            else
-                                let destParent =
-                                    if String.IsNullOrWhiteSpace parent then
-                                        Path.GetPathRoot path
-                                    else
-                                        parent
-                                let dest = Path.Combine(destParent, nextName)
-                                if File.Exists dest || Directory.Exists dest then
-                                    self.Show("An item with that name already exists.", errBrush)
-                                    false
-                                else
-                                    if isDir then Directory.Move(current, dest)
-                                    else File.Move(current, dest)
-                                    current <- dest
-                                    let mutable attrs =
-                                        if isDir then
-                                            File.GetAttributes current
-                                        else
-                                            File.GetAttributes current
-                                    if nextReadOnly then
-                                        attrs <- attrs ||| FileAttributes.ReadOnly
-                                    else
-                                        attrs <- attrs &&& ~~~FileAttributes.ReadOnly
-                                    if nextHidden then
-                                        attrs <- attrs ||| FileAttributes.Hidden
-                                    else
-                                        attrs <- attrs &&& ~~~FileAttributes.Hidden
-                                    File.SetAttributes(current, attrs)
-                                    self.RefreshDiskExplorer()
-                                    self.Show("Properties updated.", okBrush)
-                                    true
-                        else
-                            let mutable attrs = File.GetAttributes current
-                            if nextReadOnly then
-                                attrs <- attrs ||| FileAttributes.ReadOnly
-                            else
-                                attrs <- attrs &&& ~~~FileAttributes.ReadOnly
-                            if nextHidden then
-                                attrs <- attrs ||| FileAttributes.Hidden
-                            else
-                                attrs <- attrs &&& ~~~FileAttributes.Hidden
-                            File.SetAttributes(current, attrs)
-                            self.RefreshDiskExplorer()
-                            self.Show("Properties updated.", okBrush)
-                            true
-                    with error ->
-                        self.Show(error.Message, errBrush)
-                        false)
+            if not (ShellFileProperties.tryShow row.PathKey) then
+                self.Show("Could not open system properties for this item.", errBrush)
         | _ -> self.Show("Select a file or folder in Explorer.", muteBrush)
 
     member private self.ShowInfoDialog(_: obj, _: RoutedEventArgs) =
@@ -3434,9 +3920,8 @@ type MainWindow() as self =
             | None ->
                 let last = config.LastPackage
                 if not (String.IsNullOrWhiteSpace last) && File.Exists last then
-                    let name = Path.GetFileName last
-                    let message = $"Open the last package?\n\n{name}\n{last}"
-                    let! confirmed = self.ShowConfirmDialog("Open last package", message)
+                    let message = $"Do you really want to open this package?\n\n{last}"
+                    let! confirmed = self.ShowConfirmDialog("Open package", message)
                     if confirmed then
                         self.TryLoadPackageFromPath last |> ignore
         }
@@ -3478,7 +3963,10 @@ type MainWindow() as self =
                 |> Seq.toList
             match added with
             | [] -> ()
-            | paths -> self.StageFilesIntoPackage paths
+            | paths ->
+                if not (isNull metadataTabs) then
+                    metadataTabs.SelectedIndex <- 0
+                self.CopyDiskSelectionToPackage paths
         }
         |> ignore
 
@@ -3842,3 +4330,110 @@ type MainWindow() as self =
         about.Width <- 420.0
         ok.Click.Add(fun _ -> about.Close())
         about.ShowDialog(self) |> ignore
+
+    member private self.IsTypingFocus() =
+        match self.FocusManager with
+        | null -> false
+        | fm ->
+            match fm.GetFocusedElement() with
+            | :? TextBox
+            | :? AvaloniaEdit.TextEditor -> true
+            | _ -> false
+
+    member private self.TransferPackageSelectionToDisk(moveMode: bool) =
+        let selected = self.SelectedPathKeys()
+        if selected.IsEmpty then
+            self.Show("Select items in Package first.", muteBrush)
+        elif package.IsNone && pendingPaths.IsEmpty then
+            self.Show("Open a package or add files first.", muteBrush)
+        else
+            match diskDir with
+            | None -> self.Show("Open a folder in Explorer first.", muteBrush)
+            | Some target when not (Directory.Exists target) ->
+                self.Show("Open a folder in Explorer first.", muteBrush)
+            | Some target ->
+                async {
+                    let verb = if moveMode then "Move" else "Copy"
+                    let label = if selected.Length = 1 then "item" else "items"
+                    let! confirmed =
+                        self.ShowConfirmDialog(
+                            verb,
+                            $"{verb} {selected.Length} {label} to Explorer?\n\n{target}")
+                        |> Async.AwaitTask
+                    if confirmed then
+                        let result =
+                            match package with
+                            | Some current when pendingPaths.IsEmpty ->
+                                Unpack.selectedToDirectory current selected target
+                                |> Result.map (fun () -> selected.Length)
+                            | _ -> self.CopyStagingSelected(selected, target)
+                        match result with
+                        | Error error -> self.Show(string error, errBrush)
+                        | Ok count ->
+                            self.RefreshDiskExplorer()
+                            if moveMode then
+                                let entryKeys = self.SelectedEntryPathKeys()
+                                let removed = self.RemoveSelectedEntries entryKeys
+                                self.Show($"Moved {count} → {target} · removed {removed} from package.", okBrush)
+                            else
+                                self.Show($"Copied {count} → {target}", okBrush)
+                }
+                |> Async.StartImmediate
+
+    member private self.FnInfo(_: obj, _: RoutedEventArgs) =
+        if explorerPaneActive then
+            self.ShowDiskInfoDialog(null, null)
+        else
+            self.ShowInfoDialog(null, null)
+
+    member private self.FnCopy(_: obj, _: RoutedEventArgs) =
+        if explorerPaneActive then
+            let roots = self.SelectedDiskRoots()
+            if roots.IsEmpty then
+                self.Show("Select files or folders in Explorer to copy.", muteBrush)
+            else
+                self.CopyDiskSelectionToPackage roots
+        else
+            self.TransferPackageSelectionToDisk false
+
+    member private self.FnMove(_: obj, _: RoutedEventArgs) =
+        if explorerPaneActive then
+            let roots = self.SelectedDiskRoots()
+            if roots.IsEmpty then
+                self.Show("Select files or folders in Explorer to move.", muteBrush)
+            else
+                self.CopyDiskSelectionToPackage(roots, deleteSources = true)
+        else
+            self.TransferPackageSelectionToDisk true
+
+    member private self.FnDelete(_: obj, _: RoutedEventArgs) =
+        if explorerPaneActive then
+            self.DeleteSelectedDiskItems(null, null)
+        else
+            self.DeleteSelectedFiles(null, null)
+
+    member private self.FnQuit(_: obj, _: RoutedEventArgs) =
+        self.Close()
+
+    member private self.MainWindowKeyDown(_: obj, e: KeyEventArgs) =
+        if self.IsTypingFocus() then
+            ()
+        else
+            let alt = e.KeyModifiers.HasFlag KeyModifiers.Alt
+            match e.Key with
+            | Key.F1 when not alt ->
+                self.FnInfo(null, null)
+                e.Handled <- true
+            | Key.F5 when not alt ->
+                self.FnCopy(null, null)
+                e.Handled <- true
+            | Key.F6 when not alt ->
+                self.FnMove(null, null)
+                e.Handled <- true
+            | Key.F8 when not alt ->
+                self.FnDelete(null, null)
+                e.Handled <- true
+            | Key.F4 when alt ->
+                self.FnQuit(null, null)
+                e.Handled <- true
+            | _ -> ()

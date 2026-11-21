@@ -10,7 +10,8 @@
         MinWidth="760"
         MinHeight="560"
         WindowStartupLocation="CenterScreen"
-        Background="#14110F">
+        Background="#14110F"
+        KeyDown="MainWindowKeyDown">
 
     <DockPanel Margin="16,14,16,16">
         <Border DockPanel.Dock="Top" Classes="toolbar" Margin="0,0,0,14">
@@ -175,15 +176,45 @@
             </DockPanel>
         </Border>
 
-        <TextBlock x:Name="StatusText"
-                   DockPanel.Dock="Bottom"
-                   Classes="muted"
-                   Margin="0,14,0,0"
-                   Text="Add files, then Pak — or open an existing .mpx." />
+        <Grid DockPanel.Dock="Bottom"
+              Margin="0,14,0,0"
+              ColumnDefinitions="*,*,*,*,*"
+              ColumnSpacing="6">
+            <Button Classes="fn"
+                    Grid.Column="0"
+                    Click="FnInfo"
+                    ToolTip.Tip="Show info for the active pane">
+                <TextBlock Text="F1  Info" HorizontalAlignment="Center" />
+            </Button>
+            <Button Classes="fn"
+                    Grid.Column="1"
+                    Click="FnCopy"
+                    ToolTip.Tip="Copy between Explorer and Package">
+                <TextBlock Text="F5  Copy" HorizontalAlignment="Center" />
+            </Button>
+            <Button Classes="fn"
+                    Grid.Column="2"
+                    Click="FnMove"
+                    ToolTip.Tip="Move between Explorer and Package">
+                <TextBlock Text="F6  Move" HorizontalAlignment="Center" />
+            </Button>
+            <Button Classes="fn"
+                    Grid.Column="3"
+                    Click="FnDelete"
+                    ToolTip.Tip="Delete selection in the active pane">
+                <TextBlock Text="F8  Delete" HorizontalAlignment="Center" />
+            </Button>
+            <Button Classes="fn accent"
+                    Grid.Column="4"
+                    Click="FnQuit"
+                    ToolTip.Tip="Quit ModPak">
+                <TextBlock Text="Alt+F4  Quit" HorizontalAlignment="Center" />
+            </Button>
+        </Grid>
 
         <Grid ColumnDefinitions="*,18,1.2*" Margin="0,0,0,0">
-            <Border Classes="card" Grid.Column="0" MinWidth="280">
-                <Grid RowDefinitions="Auto,Auto,*">
+            <Border Classes="card" Grid.Column="0" MinWidth="280" Padding="22,22,22,12">
+                <Grid RowDefinitions="Auto,Auto,*,Auto">
                     <TextBlock Grid.Row="0"
                                Classes="label"
                                FontSize="15"
@@ -221,6 +252,8 @@
                              HorizontalAlignment="Stretch"
                              VerticalAlignment="Stretch"
                              SelectionMode="Multiple"
+                             GotFocus="DiskListGotFocus"
+                             SelectionChanged="DiskListSelectionChanged"
                              ContextRequested="DiskListContextRequested"
                              DoubleTapped="DiskListDoubleTapped"
                              KeyDown="DiskListKeyDown">
@@ -287,6 +320,14 @@
                                                        Foreground="#FFFFFF" />
                                     </MenuItem.Icon>
                                 </MenuItem>
+                                <MenuItem Header="Create directory" Click="MkdirDiskFolder">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="FolderAdd"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
                                 <MenuItem x:Name="DiskDeleteMenuItem"
                                           Header="Delete"
                                           Click="DeleteSelectedDiskItems"
@@ -322,6 +363,37 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <DockPanel Grid.Row="3"
+                               Classes="pane-footer"
+                               LastChildFill="True">
+                        <CheckBox x:Name="ExplorerMultiSelectionCheck"
+                                  Classes="pane-multi"
+                                  DockPanel.Dock="Left"
+                                  Content="Multi-selection"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  ToolTip.Tip="On: click toggles like Total Commander. Off: Ctrl+click for multi-select."
+                                  IsCheckedChanged="ExplorerMultiSelectionChanged" />
+                        <Border Classes="pane-status">
+                            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
+                                  VerticalAlignment="Center">
+                                <TextBlock x:Name="ExplorerSelSlot"
+                                           Classes="pane-status"
+                                           Grid.Column="0"
+                                           Text="0 sel" />
+                                <Border Classes="pane-status-div" Grid.Column="1" />
+                                <TextBlock x:Name="ExplorerCountSlot"
+                                           Classes="pane-status"
+                                           Grid.Column="2"
+                                           Text="0 items" />
+                                <Border Classes="pane-status-div" Grid.Column="3" />
+                                <TextBlock x:Name="ExplorerStatusSlot"
+                                           Classes="pane-status"
+                                           Grid.Column="4"
+                                           Text="Ready" />
+                            </Grid>
+                        </Border>
+                    </DockPanel>
                 </Grid>
             </Border>
 
@@ -329,9 +401,12 @@
                         x:Name="MetadataTabs"
                         SelectionChanged="MetadataTabChanged">
                     <TabItem Header="Package">
+                    <Grid RowDefinitions="*,Auto">
                     <ListBox x:Name="FileList"
+                             Grid.Row="0"
                              SelectionMode="Multiple"
                              DragDrop.AllowDrop="True"
+                             GotFocus="FileListGotFocus"
                              SelectionChanged="FileListSelectionChanged"
                              ContextRequested="FileListContextRequested"
                              DoubleTapped="FileListDoubleTapped"
@@ -383,6 +458,14 @@
                                           IsEnabled="False">
                                     <MenuItem.Icon>
                                         <ic:SymbolIcon Symbol="Rename"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Create directory" Click="MkdirPackageFolder">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="FolderAdd"
                                                        IconVariant="Regular"
                                                        FontSize="16"
                                                        Foreground="#FFFFFF" />
@@ -458,6 +541,38 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <DockPanel Grid.Row="1"
+                               Classes="pane-footer"
+                               LastChildFill="True">
+                        <CheckBox x:Name="PackageMultiSelectionCheck"
+                                  Classes="pane-multi"
+                                  DockPanel.Dock="Left"
+                                  Content="Multi-selection"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  ToolTip.Tip="On: click toggles like Total Commander. Off: Ctrl+click for multi-select."
+                                  IsCheckedChanged="PackageMultiSelectionChanged" />
+                        <Border Classes="pane-status">
+                            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
+                                  VerticalAlignment="Center">
+                                <TextBlock x:Name="PackageSelSlot"
+                                           Classes="pane-status"
+                                           Grid.Column="0"
+                                           Text="0 sel" />
+                                <Border Classes="pane-status-div" Grid.Column="1" />
+                                <TextBlock x:Name="PackageCountSlot"
+                                           Classes="pane-status"
+                                           Grid.Column="2"
+                                           Text="0 items" />
+                                <Border Classes="pane-status-div" Grid.Column="3" />
+                                <TextBlock x:Name="PackageStatusSlot"
+                                           Classes="pane-status"
+                                           Grid.Column="4"
+                                           Text="Ready" />
+                            </Grid>
+                        </Border>
+                    </DockPanel>
+                    </Grid>
                     </TabItem>
                     <TabItem Header="Manifest">
                         <DockPanel>

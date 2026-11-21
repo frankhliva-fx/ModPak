@@ -107,6 +107,70 @@ module private Shell32 =
     [<DllImport("user32.dll", SetLastError = true)>]
     extern bool DestroyIcon(nativeint hIcon)
 
+    [<Literal>]
+    let SEE_MASK_INVOKEIDLIST = 0x0000000Cu
+
+    [<Literal>]
+    let SW_SHOW = 5
+
+    [<Struct; StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)>]
+    type SHELLEXECUTEINFO =
+        val mutable cbSize: int
+        val mutable fMask: uint32
+        val mutable hwnd: nativeint
+        [<MarshalAs(UnmanagedType.LPWStr)>]
+        val mutable lpVerb: string
+        [<MarshalAs(UnmanagedType.LPWStr)>]
+        val mutable lpFile: string
+        [<MarshalAs(UnmanagedType.LPWStr)>]
+        val mutable lpParameters: string
+        [<MarshalAs(UnmanagedType.LPWStr)>]
+        val mutable lpDirectory: string
+        val mutable nShow: int
+        val mutable hInstApp: nativeint
+        val mutable lpIDList: nativeint
+        [<MarshalAs(UnmanagedType.LPWStr)>]
+        val mutable lpClass: string
+        val mutable hkeyClass: nativeint
+        val mutable dwHotKey: uint32
+        val mutable hIconOrMonitor: nativeint
+        val mutable hProcess: nativeint
+
+    [<DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)>]
+    extern bool ShellExecuteEx(SHELLEXECUTEINFO& lpExecInfo)
+
+/// Open the Windows shell Properties dialog for a file or folder.
+module ShellFileProperties =
+
+    let tryShow (path: string) : bool =
+        if not (OperatingSystem.IsWindows()) then
+            false
+        elif String.IsNullOrWhiteSpace path then
+            false
+        elif not (File.Exists path || Directory.Exists path) then
+            false
+        else
+            try
+                let mutable info = Shell32.SHELLEXECUTEINFO()
+                info.cbSize <- Marshal.SizeOf<Shell32.SHELLEXECUTEINFO>()
+                info.fMask <- Shell32.SEE_MASK_INVOKEIDLIST
+                info.hwnd <- nativeint 0
+                info.lpVerb <- "properties"
+                info.lpFile <- path
+                info.lpParameters <- null
+                info.lpDirectory <- null
+                info.nShow <- Shell32.SW_SHOW
+                info.hInstApp <- nativeint 0
+                info.lpIDList <- nativeint 0
+                info.lpClass <- null
+                info.hkeyClass <- nativeint 0
+                info.dwHotKey <- 0u
+                info.hIconOrMonitor <- nativeint 0
+                info.hProcess <- nativeint 0
+                Shell32.ShellExecuteEx(&info)
+            with _ ->
+                false
+
 /// Windows Explorer icons via SHGetFileInfo (Windows only).
 type WindowsShellFileIconProvider() =
     let cache = ConcurrentDictionary<string, IImage>(StringComparer.OrdinalIgnoreCase)
