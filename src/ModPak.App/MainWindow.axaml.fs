@@ -1121,9 +1121,9 @@ type MainWindow() as self =
         let pkgSel =
             if isNull fileList then 0 else fileList.SelectedItems.Count
         let pkgCount = itemCount fileList
-        self.SetSlot(explorerSelSlot, $"{diskSel} sel")
+        self.SetSlot(explorerSelSlot, $"{diskSel} selected")
         self.SetSlot(explorerCountSlot, $"{diskCount} items")
-        self.SetSlot(packageSelSlot, $"{pkgSel} sel")
+        self.SetSlot(packageSelSlot, $"{pkgSel} selected")
         self.SetSlot(packageCountSlot, $"{pkgCount} items")
 
     member private self.Show(text: string, brush: IBrush) =
@@ -2123,11 +2123,16 @@ type MainWindow() as self =
             diskList.AddHandler(InputElement.PointerMovedEvent, onMove, RoutingStrategies.Tunnel)
             diskList.AddHandler(InputElement.PointerReleasedEvent, onRelease, RoutingStrategies.Tunnel)
         if not (isNull fileList) then
+            fileList.AddHandler(
+                InputElement.PointerPressedEvent,
+                (fun (_: obj) (_: PointerPressedEventArgs) -> explorerPaneActive <- false),
+                RoutingStrategies.Tunnel)
             DragDrop.SetAllowDrop(fileList, true)
             DragDrop.AddDragOverHandler(fileList, fun sender e -> self.PackageListDragOver(sender, e))
             DragDrop.AddDropHandler(fileList, fun sender e -> self.PackageListDrop(sender, e))
 
     member private self.DiskListPointerPressed(_: obj, e: PointerPressedEventArgs) =
+        explorerPaneActive <- true
         if e.GetCurrentPoint(diskList).Properties.IsLeftButtonPressed then
             match e.Source with
             | :? Avalonia.Visual as visual ->
@@ -2601,14 +2606,26 @@ type MainWindow() as self =
         |> List.map (fun entry -> self.CodecKey entry.RelativePath)
         |> Set.ofList
 
+    /// Asked from the copy worker. Must not block the UI thread — ShowDialog + GetResult deadlocks clicks.
     member private self.AskOverwriteOnUi(owner: Window, rel: string) : bool =
-        Dispatcher.UIThread
-            .InvokeAsync(fun () ->
-                self.ShowConfirmDialog("Overwrite", $"Overwrite existing file?\n\n{rel}", owner)
-                    .GetAwaiter()
-                    .GetResult())
-            .GetAwaiter()
-            .GetResult()
+        if Dispatcher.UIThread.CheckAccess() then
+            false
+        else
+            let gate = TaskCompletionSource<bool>()
+            Dispatcher.UIThread.Post(fun () ->
+                task {
+                    try
+                        let! answer =
+                            self.ShowConfirmDialog(
+                                "Overwrite",
+                                $"Overwrite existing file?\n\n{rel}",
+                                owner)
+                        gate.TrySetResult answer |> ignore
+                    with _ ->
+                        gate.TrySetResult false |> ignore
+                }
+                |> ignore)
+            gate.Task.GetAwaiter().GetResult()
 
     member private self.DeleteDiskRootsQuiet(roots: string list) =
         let mutable removed = 0
@@ -2668,7 +2685,7 @@ type MainWindow() as self =
             let copyBtn =
                 self.DialogAccentIconButton(
                     actionLabel,
-                    if moveMode then Symbol.ArrowMove else Symbol.Copy)
+                    if moveMode then Symbol.ArrowRight else Symbol.Copy)
             let buttons =
                 DockPanel(LastChildFill = false, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
             DockPanel.SetDock(cancelBtn, Dock.Left)
@@ -2869,6 +2886,20 @@ type MainWindow() as self =
                         yield row.PathKey
                     | _ -> ()
             ]
+
+    /// File paths to unpack/copy for the current Package selection (folders expand to contained files).
+    member private self.SelectedUnpackPathKeys() =
+        let selected = self.SelectedEntryPathKeys()
+        if selected.IsEmpty then
+            []
+        else
+            self.AllExplorerFileEntries()
+            |> List.map (fun entry -> Pathing.normalize entry.RelativePath)
+            |> List.filter (fun path -> self.PathMatchesSelection(path, selected))
+            |> List.distinct
+
+    /// Last list pane the user worked in (Fn buttons steal focus — keep this, don't infer from leftover selection).
+    member private self.FnSourceIsExplorer() = explorerPaneActive
 
     member private self.PathIsUnder(path: string, dir: string) =
         let p = Pathing.normalize path
@@ -4341,9 +4372,12 @@ type MainWindow() as self =
             | _ -> false
 
     member private self.TransferPackageSelectionToDisk(moveMode: bool) =
-        let selected = self.SelectedPathKeys()
-        if selected.IsEmpty then
+        let selected = self.SelectedUnpackPathKeys()
+        let entryKeys = self.SelectedEntryPathKeys()
+        if entryKeys.IsEmpty then
             self.Show("Select items in Package first.", muteBrush)
+        elif selected.IsEmpty then
+            self.Show("No files under the Package selection.", muteBrush)
         elif package.IsNone && pendingPaths.IsEmpty then
             self.Show("Open a package or add files first.", muteBrush)
         else
@@ -4354,11 +4388,11 @@ type MainWindow() as self =
             | Some target ->
                 async {
                     let verb = if moveMode then "Move" else "Copy"
-                    let label = if selected.Length = 1 then "item" else "items"
+                    let label = if entryKeys.Length = 1 then "item" else "items"
                     let! confirmed =
                         self.ShowConfirmDialog(
                             verb,
-                            $"{verb} {selected.Length} {label} to Explorer?\n\n{target}")
+                            $"{verb} {entryKeys.Length} {label} to Explorer?\n\n{target}")
                         |> Async.AwaitTask
                     if confirmed then
                         let result =
@@ -4372,7 +4406,6 @@ type MainWindow() as self =
                         | Ok count ->
                             self.RefreshDiskExplorer()
                             if moveMode then
-                                let entryKeys = self.SelectedEntryPathKeys()
                                 let removed = self.RemoveSelectedEntries entryKeys
                                 self.Show($"Moved {count} → {target} · removed {removed} from package.", okBrush)
                             else
@@ -4381,13 +4414,13 @@ type MainWindow() as self =
                 |> Async.StartImmediate
 
     member private self.FnInfo(_: obj, _: RoutedEventArgs) =
-        if explorerPaneActive then
+        if self.FnSourceIsExplorer() then
             self.ShowDiskInfoDialog(null, null)
         else
             self.ShowInfoDialog(null, null)
 
     member private self.FnCopy(_: obj, _: RoutedEventArgs) =
-        if explorerPaneActive then
+        if self.FnSourceIsExplorer() then
             let roots = self.SelectedDiskRoots()
             if roots.IsEmpty then
                 self.Show("Select files or folders in Explorer to copy.", muteBrush)
@@ -4397,7 +4430,8 @@ type MainWindow() as self =
             self.TransferPackageSelectionToDisk false
 
     member private self.FnMove(_: obj, _: RoutedEventArgs) =
-        if explorerPaneActive then
+        // Same pane rules as F5 — last list the user clicked/focused.
+        if self.FnSourceIsExplorer() then
             let roots = self.SelectedDiskRoots()
             if roots.IsEmpty then
                 self.Show("Select files or folders in Explorer to move.", muteBrush)
@@ -4406,8 +4440,14 @@ type MainWindow() as self =
         else
             self.TransferPackageSelectionToDisk true
 
+    member private self.FnMkdir(_: obj, _: RoutedEventArgs) =
+        if self.FnSourceIsExplorer() then
+            self.MkdirDiskFolder(null, null)
+        else
+            self.MkdirPackageFolder(null, null)
+
     member private self.FnDelete(_: obj, _: RoutedEventArgs) =
-        if explorerPaneActive then
+        if self.FnSourceIsExplorer() then
             self.DeleteSelectedDiskItems(null, null)
         else
             self.DeleteSelectedFiles(null, null)
@@ -4429,6 +4469,9 @@ type MainWindow() as self =
                 e.Handled <- true
             | Key.F6 when not alt ->
                 self.FnMove(null, null)
+                e.Handled <- true
+            | Key.F7 when not alt ->
+                self.FnMkdir(null, null)
                 e.Handled <- true
             | Key.F8 when not alt ->
                 self.FnDelete(null, null)

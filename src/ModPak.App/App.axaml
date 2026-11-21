@@ -302,8 +302,7 @@
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="Normal" />
             <Setter Property="Padding" Value="6,0,0,0" />
-            <Setter Property="MinHeight" Value="36" />
-            <Setter Property="Height" Value="36" />
+            <Setter Property="MinHeight" Value="0" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Foreground" Value="#C8B8A8" />
@@ -315,15 +314,12 @@
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="Padding" Value="12,0" />
             <Setter Property="MinHeight" Value="36" />
-            <Setter Property="Height" Value="36" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-        <Style Selector="Border.pane-status-div">
-            <Setter Property="Width" Value="1" />
-            <Setter Property="Background" Value="#3F3731" />
-            <Setter Property="Margin" Value="10,8" />
             <Setter Property="VerticalAlignment" Value="Stretch" />
+        </Style>
+        <Style Selector="Border.pane-status.pane-footer">
+            <Setter Property="Margin" Value="0,10,0,0" />
+            <Setter Property="MinHeight" Value="36" />
         </Style>
         <Style Selector="TextBlock.pane-status">
             <Setter Property="FontSize" Value="13" />
@@ -331,12 +327,17 @@
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style Selector="DockPanel.pane-footer">
-            <Setter Property="MinHeight" Value="36" />
-            <Setter Property="Margin" Value="0,10,0,0" />
-            <Setter Property="VerticalAlignment" Value="Bottom" />
+        <Style Selector="TextBlock.pane-status-sep">
+            <Setter Property="Text" Value="|" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#6A5E54" />
+            <Setter Property="Margin" Value="10,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Opacity" Value="0.85" />
         </Style>
         <Style Selector="Button.fn">
+            <!-- Keep list focus so the first click runs the action (no focus-only click). -->
+            <Setter Property="Focusable" Value="False" />
             <Setter Property="Background" Value="#2A2521" />
             <Setter Property="BorderBrush" Value="#4A423C" />
             <Setter Property="BorderThickness" Value="1" />

@@ -178,7 +178,7 @@
 
         <Grid DockPanel.Dock="Bottom"
               Margin="0,14,0,0"
-              ColumnDefinitions="*,*,*,*,*"
+              ColumnDefinitions="*,*,*,*,*,*"
               ColumnSpacing="6">
             <Button Classes="fn"
                     Grid.Column="0"
@@ -200,12 +200,18 @@
             </Button>
             <Button Classes="fn"
                     Grid.Column="3"
+                    Click="FnMkdir"
+                    ToolTip.Tip="Create a folder in the active pane">
+                <TextBlock Text="F7  MkDir" HorizontalAlignment="Center" />
+            </Button>
+            <Button Classes="fn"
+                    Grid.Column="4"
                     Click="FnDelete"
                     ToolTip.Tip="Delete selection in the active pane">
                 <TextBlock Text="F8  Delete" HorizontalAlignment="Center" />
             </Button>
             <Button Classes="fn accent"
-                    Grid.Column="4"
+                    Grid.Column="5"
                     Click="FnQuit"
                     ToolTip.Tip="Quit ModPak">
                 <TextBlock Text="Alt+F4  Quit" HorizontalAlignment="Center" />
@@ -240,7 +246,7 @@
                                 VerticalAlignment="Center"
                                 Click="ApplyDiskPathClick"
                                 ToolTip.Tip="Go to path">
-                            <ic:SymbolIcon Symbol="ArrowRight"
+                            <ic:SymbolIcon Symbol="Checkmark"
                                            IconVariant="Filled"
                                            FontSize="16"
                                            Foreground="#C8B8A8" />
@@ -363,37 +369,39 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <DockPanel Grid.Row="3"
-                               Classes="pane-footer"
-                               LastChildFill="True">
-                        <CheckBox x:Name="ExplorerMultiSelectionCheck"
-                                  Classes="pane-multi"
-                                  DockPanel.Dock="Left"
-                                  Content="Multi-selection"
-                                  VerticalAlignment="Center"
-                                  Margin="0,0,10,0"
-                                  ToolTip.Tip="On: click toggles like Total Commander. Off: Ctrl+click for multi-select."
-                                  IsCheckedChanged="ExplorerMultiSelectionChanged" />
-                        <Border Classes="pane-status">
-                            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
-                                  VerticalAlignment="Center">
-                                <TextBlock x:Name="ExplorerSelSlot"
-                                           Classes="pane-status"
-                                           Grid.Column="0"
-                                           Text="0 sel" />
-                                <Border Classes="pane-status-div" Grid.Column="1" />
-                                <TextBlock x:Name="ExplorerCountSlot"
-                                           Classes="pane-status"
-                                           Grid.Column="2"
-                                           Text="0 items" />
-                                <Border Classes="pane-status-div" Grid.Column="3" />
-                                <TextBlock x:Name="ExplorerStatusSlot"
-                                           Classes="pane-status"
-                                           Grid.Column="4"
-                                           Text="Ready" />
-                            </Grid>
-                        </Border>
-                    </DockPanel>
+                    <Border Grid.Row="3"
+                            Classes="pane-status pane-footer">
+                        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*"
+                              VerticalAlignment="Center">
+                            <CheckBox x:Name="ExplorerMultiSelectionCheck"
+                                      Classes="pane-multi"
+                                      Grid.Column="0"
+                                      Content="Multi-selection"
+                                      ToolTip.Tip="On: click toggles like Total Commander. Off: Ctrl+click for multi-select."
+                                      IsCheckedChanged="ExplorerMultiSelectionChanged" />
+                            <TextBlock Classes="pane-status-sep"
+                                       Grid.Column="1"
+                                       Text="|" />
+                            <TextBlock x:Name="ExplorerSelSlot"
+                                       Classes="pane-status"
+                                       Grid.Column="2"
+                                       Text="0 selected" />
+                            <TextBlock Classes="pane-status-sep"
+                                       Grid.Column="3"
+                                       Text="|" />
+                            <TextBlock x:Name="ExplorerCountSlot"
+                                       Classes="pane-status"
+                                       Grid.Column="4"
+                                       Text="0 items" />
+                            <TextBlock Classes="pane-status-sep"
+                                       Grid.Column="5"
+                                       Text="|" />
+                            <TextBlock x:Name="ExplorerStatusSlot"
+                                       Classes="pane-status"
+                                       Grid.Column="6"
+                                       Text="Ready" />
+                        </Grid>
+                    </Border>
                 </Grid>
             </Border>
 
@@ -541,37 +549,39 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <DockPanel Grid.Row="1"
-                               Classes="pane-footer"
-                               LastChildFill="True">
-                        <CheckBox x:Name="PackageMultiSelectionCheck"
-                                  Classes="pane-multi"
-                                  DockPanel.Dock="Left"
-                                  Content="Multi-selection"
-                                  VerticalAlignment="Center"
-                                  Margin="0,0,10,0"
-                                  ToolTip.Tip="On: click toggles like Total Commander. Off: Ctrl+click for multi-select."
-                                  IsCheckedChanged="PackageMultiSelectionChanged" />
-                        <Border Classes="pane-status">
-                            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*"
-                                  VerticalAlignment="Center">
-                                <TextBlock x:Name="PackageSelSlot"
-                                           Classes="pane-status"
-                                           Grid.Column="0"
-                                           Text="0 sel" />
-                                <Border Classes="pane-status-div" Grid.Column="1" />
-                                <TextBlock x:Name="PackageCountSlot"
-                                           Classes="pane-status"
-                                           Grid.Column="2"
-                                           Text="0 items" />
-                                <Border Classes="pane-status-div" Grid.Column="3" />
-                                <TextBlock x:Name="PackageStatusSlot"
-                                           Classes="pane-status"
-                                           Grid.Column="4"
-                                           Text="Ready" />
-                            </Grid>
-                        </Border>
-                    </DockPanel>
+                    <Border Grid.Row="1"
+                            Classes="pane-status pane-footer">
+                        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*"
+                              VerticalAlignment="Center">
+                            <CheckBox x:Name="PackageMultiSelectionCheck"
+                                      Classes="pane-multi"
+                                      Grid.Column="0"
+                                      Content="Multi-selection"
+                                      ToolTip.Tip="On: click toggles like Total Commander. Off: Ctrl+click for multi-select."
+                                      IsCheckedChanged="PackageMultiSelectionChanged" />
+                            <TextBlock Classes="pane-status-sep"
+                                       Grid.Column="1"
+                                       Text="|" />
+                            <TextBlock x:Name="PackageSelSlot"
+                                       Classes="pane-status"
+                                       Grid.Column="2"
+                                       Text="0 selected" />
+                            <TextBlock Classes="pane-status-sep"
+                                       Grid.Column="3"
+                                       Text="|" />
+                            <TextBlock x:Name="PackageCountSlot"
+                                       Classes="pane-status"
+                                       Grid.Column="4"
+                                       Text="0 items" />
+                            <TextBlock Classes="pane-status-sep"
+                                       Grid.Column="5"
+                                       Text="|" />
+                            <TextBlock x:Name="PackageStatusSlot"
+                                       Classes="pane-status"
+                                       Grid.Column="6"
+                                       Text="Ready" />
+                        </Grid>
+                    </Border>
                     </Grid>
                     </TabItem>
                     <TabItem Header="Manifest">
