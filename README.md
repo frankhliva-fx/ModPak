@@ -1,15 +1,15 @@
 # ModPak
 
-F# knižnica a Avalonia appka na balenie Kingston CMS modulov do binárneho kontajnera **MODPAK64** (prípona `.mpx`).
+F# library and Avalonia desktop application for packaging Kingston CMS modules into the **MODPAK64** binary container (`.mpx` extension).
 
-Špecifikácia formátu: [ModPak.md](ModPak.md).
+**Format Specification:** [Specification.md](Specification.md)
 
-| Projekt | Účel |
-|---------|------|
-| `src/ModPak` | Knižnica: pack / unpack / validate |
+| Project | Purpose |
+|---------|---------|
+| `src/ModPak` | Library: pack / unpack / validate |
 | `src/ModPak.App` | Desktop UI |
-| `src/ModPak.Scripts` | Runnable demá + FSX v Solution Explorer |
-| `scripts/*.fsx` | FSI round-trip testy |
+| `src/ModPak.Scripts` | Runnable demos + FSX in Solution Explorer |
+| `scripts/*.fsx` | FSI round-trip tests |
 
 ---
 
@@ -17,19 +17,19 @@ F# knižnica a Avalonia appka na balenie Kingston CMS modulov do binárneho kont
 
 Toolbar: **New / Open** · **Add** · **Save / Pak / Unpak / Unpak All** · **Validate / Info** · **About**.
 
-- **Save** — pri otvorenom `.mpx` prepíše súbor; bez cesty (New / staging) ponúkne Save As. Zapne sa pri dirty zmene (súbory, manifest, skripty).
-- **Pak** — vždy Save As (výber cieľa).
-- **Add** — staging súborov z disku; cesta dialógu je samostatná v TOML (`Dialogs.AddFile`), nezávislá od Open `.mpx`.
-- Dvojpanel: **vľavo Explorer** (Windows disk, editovateľná cesta, `..`, `<DIR>`, výber súborov/priečinkov, stromové Add to package s progress) · **vpravo** taby **Package** · **Manifest** · **Scripts**.
+- **Save** — overwrites the file when an `.mpx` archive is open; prompts Save As if there is no path yet (New / staging). Enabled on dirty changes (files, manifest, scripts).
+- **Pak** — always triggers Save As (choose target destination).
+- **Add** — stages files from disk; the dialog path is stored separately in TOML (`Dialogs.AddFile`), independent of Open `.mpx`.
+- Dual-pane layout: **left Explorer** (Windows drive, editable path, `..`, `<DIR>`, file/folder selection, tree-based Add to package with progress) · **right** tabs **Package** · **Manifest** · **Scripts**.
 
-Štart:
+Startup:
 
-- `ModPak.App.exe cesta\k\baliku.mpx` — otvorí balík (aj dvojklik na `.mpx` po per-user asociácii).
-- Bez argumentu, ak je v TOML `Session.LastPackage` a súbor existuje — Yes/No dialóg „Open last package?“.
+- `ModPak.App.exe path\to\package.mpx` — opens the package (also works by double-clicking `.mpx` once per-user file association is configured).
+- Without arguments, if `Session.LastPackage` is set in TOML and the file exists — prompts a Yes/No dialog: "Open last package?".
 
 ---
 
-## Knižnica (API skratka)
+## Library (API Quick Reference)
 
 ```fsharp
 open ModPak
@@ -44,26 +44,26 @@ Unpack.extract archivePath targetDir
 Validate.archive path
 ```
 
-Nízkoúrovňové IO: modul `Mp64` (`readBytes` / `writeBytes` / `writeFile`).
+Low-level IO: `Mp64` module (`readBytes` / `writeBytes` / `writeFile`).
 
 ---
 
-## App nastavenia
+## App Settings
 
 `%AppData%\Kingston\ModPak\settings.toml`
 
-Posledné priečinky dialógov a session cesty sa ukladajú samostatne — Open `.mpx` neprepíše Add files a naopak.
+Last dialog directories and session paths are stored independently — opening an `.mpx` file does not overwrite the Add files path and vice versa.
 
 ```toml
 [Dialogs]
 OpenFile = "…"      # Open .mpx
 AddFile = "…"       # Add files (staging)
 OpenScript = "…"    # Scripts → Open
-SaveFile = "…"      # Save / Pak (cieľ .mpx)
+SaveFile = "…"      # Save / Pak (target .mpx)
 OpenFolder = "…"    # Unpak folder
 
 [Session]
-LastPackage = "…"   # posledný otvorený / uložený .mpx (full path)
+LastPackage = "…"   # last opened / saved .mpx (full path)
 
 [MainWindow]
 WindowState = "Normal"
@@ -72,15 +72,15 @@ Height = 720
 
 [Metadata]
 Tab = "Package"     # Package | Manifest | Scripts
-ScriptKind = "JS"   # JS | Wasm | MySql | PostgreSql | Sqlite | Lua  (šablóna pre New/Add)
+ScriptKind = "JS"   # JS | Wasm | MySql | PostgreSql | Sqlite | Lua  (template for New/Add)
 ExecutionTrigger = "OnStart"    # Manual | BeforeMount | OnMount | OnStart | BeforeUnmount | OnUnmount
 ```
 
-Formulár manifestu sa do TOML neukladá. Wire chunk **MANI** = Manifest (JSON + ikona). Samostatný package-manifest chunk formát už nemá.
+The manifest form state is not persisted in TOML. The wire chunk **MANI** represents the Manifest (JSON + icon). The format no longer uses a separate package-manifest chunk.
 
 ---
 
-## Build / test
+## Build / Test
 
 ```powershell
 dotnet build apps/ModPak/ModPak.slnx
@@ -92,10 +92,10 @@ dotnet fsi apps/ModPak/scripts/ModPak.fsx
 
 ---
 
-## Závislosti (knižnica)
+## Dependencies (Library)
 
-- `Lzma.Net` — LZMA Alone (meta + voliteľné FILE)
-- `K4os.Compression.LZ4` — LZ4 block (default FILE)
-- `ZstdSharp.Port` — voliteľný Zstd pre FILE
+- `Lzma.Net` — LZMA Alone (metadata + optional FILE)
+- `K4os.Compression.LZ4` — LZ4 block (default for FILE)
+- `ZstdSharp.Port` — optional Zstd for FILE
 - `System.IO.Hashing` — CRC32
-- `MimeTypesMap` — MIME z prípony
+- `MimeTypesMap` — MIME type detection from file extension
