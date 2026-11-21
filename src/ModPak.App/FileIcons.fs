@@ -1,0 +1,182 @@
+namespace ModPak.App
+
+open System
+open System.Collections.Concurrent
+open System.Drawing
+open System.Drawing.Imaging
+open System.IO
+open System.Runtime.InteropServices
+open Avalonia.Media
+
+/// Pluggable shell / theme icon source — swap per OS (Windows Shell, Linux theme, …).
+type IFileIconProvider =
+    /// Resolve a small icon for a file path or extension (e.g. "a.png" / ".png").
+    abstract GetIcon: pathOrExtension: string -> IImage
+    /// Folder / directory icon (Explorer-style).
+    abstract GetFolderIcon: unit -> IImage
+
+/// List row for the Explorer panel (file or directory).
+type FileListItem
+    (
+        icon: IImage,
+        name: string,
+        mime: string,
+        size: string,
+        codec: byte,
+        pathKey: string,
+        canChangeCodec: bool,
+        isDirectory: bool,
+        isParent: bool
+    ) =
+    member _.Icon = icon
+    member _.Name = name
+    member _.Mime = mime
+    member _.Size = size
+    member _.Codec = codec
+    member _.PathKey = pathKey
+    member _.IsDirectory = isDirectory
+    member _.IsParent = isParent
+    member _.CanChangeCodec = canChangeCodec && not isDirectory && not isParent
+    member _.HasMime = not isDirectory && not isParent && not (String.IsNullOrWhiteSpace mime)
+    member _.ShowCodec = canChangeCodec && not isDirectory && not isParent
+    member _.CodecLabel =
+        match codec with
+        | 0uy -> "none"
+        | 1uy -> "lzma"
+        | 2uy -> "lz4"
+        | 3uy -> "zstd"
+        | c -> string c
+
+module FileListFormatting =
+
+    let size (bytes: int) =
+        let n = float bytes
+        if bytes >= 1024 * 1024 then $"%.1f{n / 1024.0 / 1024.0} MB"
+        elif bytes >= 1024 then $"%.1f{n / 1024.0} KB"
+        else $"{bytes} B"
+
+    let mime (value: string) =
+        if String.IsNullOrWhiteSpace value then ""
+        else value.Trim()
+
+    let nextCodec (codec: byte) =
+        match codec with
+        | 2uy -> 1uy // lz4 -> lzma
+        | 1uy -> 3uy // lzma -> zstd
+        | 3uy -> 0uy // zstd -> none
+        | _ -> 2uy // none/other -> lz4
+
+
+module private Shell32 =
+
+    [<Literal>]
+    let SHGFI_ICON = 0x000000100u
+
+    [<Literal>]
+    let SHGFI_SMALLICON = 0x000000001u
+
+    [<Literal>]
+    let SHGFI_USEFILEATTRIBUTES = 0x000000010u
+
+    [<Literal>]
+    let FILE_ATTRIBUTE_NORMAL = 0x00000080u
+
+    [<Literal>]
+    let FILE_ATTRIBUTE_DIRECTORY = 0x00000010u
+
+    [<Struct; StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)>]
+    type SHFILEINFO =
+        val mutable hIcon: nativeint
+        val mutable iIcon: int
+        val mutable dwAttributes: uint32
+        [<MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)>]
+        val mutable szDisplayName: string
+        [<MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)>]
+        val mutable szTypeName: string
+
+    [<DllImport("shell32.dll", CharSet = CharSet.Unicode)>]
+    extern nativeint SHGetFileInfo(
+        string pszPath,
+        uint32 dwFileAttributes,
+        SHFILEINFO& psfi,
+        uint32 cbFileInfo,
+        uint32 uFlags)
+
+    [<DllImport("user32.dll", SetLastError = true)>]
+    extern bool DestroyIcon(nativeint hIcon)
+
+/// Windows Explorer icons via SHGetFileInfo (Windows only).
+type WindowsShellFileIconProvider() =
+    let cache = ConcurrentDictionary<string, IImage>(StringComparer.OrdinalIgnoreCase)
+    let mutable folderIcon: IImage = null
+    let mutable folderIconLoaded = false
+
+    let probePath (pathOrExtension: string) =
+        let value = if isNull pathOrExtension then "" else pathOrExtension.Trim()
+        if value = "" then "file"
+        elif value.StartsWith(".", StringComparison.Ordinal) then "file" + value
+        elif value.Contains('.') then value
+        else "file." + value
+
+    let extensionKey (pathOrExtension: string) =
+        let value = if isNull pathOrExtension then "" else pathOrExtension.Trim()
+        if value = "" then ""
+        elif value.StartsWith(".", StringComparison.Ordinal) then value.ToLowerInvariant()
+        else
+            let ext = Path.GetExtension value
+            if String.IsNullOrEmpty ext then "" else ext.ToLowerInvariant()
+
+    let loadIcon (probe: string) (attrs: uint32) : IImage =
+        let mutable info = Shell32.SHFILEINFO()
+        let flags = Shell32.SHGFI_ICON ||| Shell32.SHGFI_SMALLICON ||| Shell32.SHGFI_USEFILEATTRIBUTES
+        let handle =
+            Shell32.SHGetFileInfo(
+                probe,
+                attrs,
+                &info,
+                uint32 (Marshal.SizeOf<Shell32.SHFILEINFO>()),
+                flags)
+        if handle = nativeint 0 || info.hIcon = nativeint 0 then
+            null
+        else
+            try
+                try
+                    use icon = Icon.FromHandle info.hIcon
+                    use gdi = icon.ToBitmap()
+                    use ms = new MemoryStream()
+                    gdi.Save(ms, ImageFormat.Png)
+                    ms.Position <- 0L
+                    new Avalonia.Media.Imaging.Bitmap(ms) :> IImage
+                with _ ->
+                    null
+            finally
+                Shell32.DestroyIcon info.hIcon |> ignore
+
+    let load (pathOrExtension: string) : IImage =
+        loadIcon (probePath pathOrExtension) Shell32.FILE_ATTRIBUTE_NORMAL
+
+    interface IFileIconProvider with
+        member _.GetIcon(pathOrExtension) =
+            let key = extensionKey pathOrExtension
+            cache.GetOrAdd(key, fun _ -> load pathOrExtension)
+
+        member _.GetFolderIcon() =
+            if not folderIconLoaded then
+                folderIcon <- loadIcon "folder" Shell32.FILE_ATTRIBUTE_DIRECTORY
+                folderIconLoaded <- true
+            folderIcon
+
+/// Placeholder provider for non-Windows (swap for theme icons later).
+type FallbackFileIconProvider() =
+    interface IFileIconProvider with
+        member _.GetIcon(_pathOrExtension) = null
+        member _.GetFolderIcon() = null
+
+module FileIconProvider =
+
+    /// Create the platform provider (Windows Shell on Windows, else fallback).
+    let create () : IFileIconProvider =
+        if OperatingSystem.IsWindows() then
+            WindowsShellFileIconProvider() :> IFileIconProvider
+        else
+            FallbackFileIconProvider() :> IFileIconProvider

@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/ModPak/ModPak.fsproj" />
+  <Project Path="src/ModPak.App/ModPak.App.fsproj" />
+  <Project Path="src/ModPak.Scripts/ModPak.Scripts.fsproj" />
+</Solution>

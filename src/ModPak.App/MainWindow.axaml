@@ -1,0 +1,729 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ic="using:FluentIcons.Avalonia"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="ModPak.App.MainWindow"
+        Title="ModPak 3.6"
+        Icon="/Assets/icon.ico"
+        Width="980"
+        Height="720"
+        MinWidth="760"
+        MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        Background="#14110F">
+
+    <DockPanel Margin="16,14,16,16">
+        <Border DockPanel.Dock="Top" Classes="toolbar" Margin="0,0,0,14">
+            <DockPanel LastChildFill="False" Margin="8,6">
+                <StackPanel Orientation="Horizontal" Spacing="2">
+                    <Button Classes="tool" Click="NewPackage" ToolTip.Tip="Start a new empty package">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="Document"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="New"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="tool" Click="OpenPackage" ToolTip.Tip="Open an existing .mpx package">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="DocumentFolder"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Open"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Border Classes="tool-sep" />
+
+                    <Button Classes="tool" Click="AddFiles" ToolTip.Tip="Add files to the staging list">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="DocumentAdd"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Add"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Border Classes="tool-sep" />
+
+                    <Button x:Name="SaveButton"
+                            Classes="tool"
+                            Click="SavePackage"
+                            IsEnabled="False"
+                            ToolTip.Tip="Save changes to the open .mpx">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="CheckmarkCircle"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Save"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="tool" Click="PackPackage" ToolTip.Tip="Pak staged files into a .mpx">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="Briefcase"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Pak"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="UnpackButton"
+                            Classes="tool"
+                            Click="UnpackPackage"
+                            IsEnabled="False"
+                            ToolTip.Tip="Unpak selected files">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="ArrowSquareDown"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Unpak"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="UnpackAllButton"
+                            Classes="tool"
+                            Click="UnpackAllPackage"
+                            IsEnabled="False"
+                            ToolTip.Tip="Unpak all files">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="ArrowSquareDown"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Unpak All"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Border Classes="tool-sep" />
+
+                    <Button Classes="tool" Click="ValidatePackage" ToolTip.Tip="Validate the loaded package">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="ShieldCheckmark"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Validate"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="InfoButton"
+                            Classes="tool"
+                            Click="ShowInfoDialog"
+                            IsEnabled="False"
+                            ToolTip.Tip="Package / format info">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="Info"
+                                           IconVariant="Filled"
+                                           FontSize="28"
+                                           Foreground="#4FC3F7"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Info"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Border Classes="tool-sep" />
+
+                    <Button Classes="tool" Click="ShowAbout" ToolTip.Tip="About ModPak">
+                        <StackPanel Spacing="4">
+                            <Image Source="/Assets/icon.ico"
+                                   Width="28"
+                                   Height="28"
+                                   HorizontalAlignment="Center" />
+                            <TextBlock Text="About"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center"
+                            Margin="12,0,8,0">
+                    <ic:SymbolIcon Symbol="Options"
+                                   IconVariant="Color"
+                                   FontSize="18"
+                                   VerticalAlignment="Center" />
+                    <TextBlock Classes="muted"
+                               Text="Compression"
+                               VerticalAlignment="Center"
+                               FontSize="12" />
+                    <ComboBox x:Name="CodecBox" SelectedIndex="1" MinWidth="110">
+                        <ComboBoxItem Content="None" Tag="0" />
+                        <ComboBoxItem Content="LZ4" Tag="2" />
+                        <ComboBoxItem Content="LZMA" Tag="1" />
+                        <ComboBoxItem Content="Zstd" Tag="3" />
+                    </ComboBox>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <TextBlock x:Name="StatusText"
+                   DockPanel.Dock="Bottom"
+                   Classes="muted"
+                   Margin="0,14,0,0"
+                   Text="Add files, then Pak — or open an existing .mpx." />
+
+        <Grid ColumnDefinitions="*,18,1.2*" Margin="0,0,0,0">
+            <Border Classes="card" Grid.Column="0" MinWidth="280">
+                <Grid RowDefinitions="Auto,Auto,*">
+                    <TextBlock Grid.Row="0"
+                               Classes="label"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Margin="0,0,0,8"
+                               Text="Explorer" />
+                    <Grid Grid.Row="1"
+                          ColumnDefinitions="*,Auto"
+                          Margin="0,0,0,8">
+                        <TextBox x:Name="DiskPathBox"
+                                 Grid.Column="0"
+                                 MinHeight="36"
+                                 VerticalAlignment="Center"
+                                 Watermark="Path or This PC"
+                                 KeyDown="DiskPathBoxKeyDown"
+                                 TextChanged="DiskPathBoxTextChanged" />
+                        <Button x:Name="GoDiskPathButton"
+                                Grid.Column="1"
+                                Classes="clear"
+                                Margin="8,0,0,0"
+                                MinWidth="40"
+                                MinHeight="36"
+                                VerticalAlignment="Center"
+                                Click="ApplyDiskPathClick"
+                                ToolTip.Tip="Go to path">
+                            <ic:SymbolIcon Symbol="ArrowRight"
+                                           IconVariant="Filled"
+                                           FontSize="16"
+                                           Foreground="#C8B8A8" />
+                        </Button>
+                    </Grid>
+                    <ListBox x:Name="DiskList"
+                             Grid.Row="2"
+                             MinHeight="120"
+                             HorizontalAlignment="Stretch"
+                             VerticalAlignment="Stretch"
+                             SelectionMode="Multiple"
+                             DoubleTapped="DiskListDoubleTapped"
+                             KeyDown="DiskListKeyDown">
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Open" Click="OpenSelectedDiskItem">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Open"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Add to package" Click="AddSelectedDiskFiles">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Add"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel LastChildFill="True" Margin="0,1">
+                                    <Image DockPanel.Dock="Left"
+                                           Width="16"
+                                           Height="16"
+                                           Margin="0,0,10,0"
+                                           VerticalAlignment="Center"
+                                           Source="{Binding Icon}" />
+                                    <TextBlock DockPanel.Dock="Right"
+                                               Text="{Binding Size}"
+                                               Margin="12,0,0,0"
+                                               FontSize="12"
+                                               Foreground="#8FBF9A"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Name}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <TabControl Grid.Column="2"
+                        x:Name="MetadataTabs"
+                        SelectionChanged="MetadataTabChanged">
+                    <TabItem Header="Package">
+                    <ListBox x:Name="FileList"
+                             SelectionMode="Multiple"
+                             DragDrop.AllowDrop="True"
+                             SelectionChanged="FileListSelectionChanged"
+                             ContextRequested="FileListContextRequested"
+                             DoubleTapped="FileListDoubleTapped"
+                             KeyDown="FileListKeyDown">
+                        <ListBox.ContextMenu>
+                            <ContextMenu Opening="FileListMenuOpening">
+                                <MenuItem x:Name="OpenMenuItem"
+                                          Header="Open"
+                                          Click="OpenSelectedFile"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Open"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Select all" Click="SelectAllFiles">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="SelectAllOn"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Unselect all" Click="UnselectAllFiles">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="SelectAllOff"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem x:Name="DetailsMenuItem"
+                                          Header="Info"
+                                          Click="ShowInfoDialog"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Info"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem x:Name="RenameMenuItem"
+                                          Header="Rename"
+                                          Click="RenameSelectedFile"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Rename"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem x:Name="DeleteMenuItem"
+                                          Header="Delete"
+                                          Click="DeleteSelectedFiles"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="Delete"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem x:Name="UnpakMenuItem"
+                                          Header="Unpak"
+                                          Click="UnpackPackage"
+                                          IsEnabled="False">
+                                    <MenuItem.Icon>
+                                        <ic:SymbolIcon Symbol="ArrowSquareDown"
+                                                       IconVariant="Regular"
+                                                       FontSize="16"
+                                                       Foreground="#FFFFFF" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel LastChildFill="True" Margin="0,1">
+                                    <Image DockPanel.Dock="Left"
+                                           Width="16"
+                                           Height="16"
+                                           Margin="0,0,10,0"
+                                           VerticalAlignment="Center"
+                                           Source="{Binding Icon}" />
+                                    <Button DockPanel.Dock="Right"
+                                            Classes="codec-chip"
+                                            Margin="12,0,0,0"
+                                            Padding="8,2"
+                                            MinHeight="0"
+                                            MinWidth="0"
+                                            VerticalAlignment="Center"
+                                            IsVisible="{Binding ShowCodec}"
+                                            IsEnabled="{Binding CanChangeCodec}"
+                                            Click="CycleFileCodec"
+                                            ToolTip.Tip="Click to cycle compression">
+                                        <TextBlock Text="{Binding CodecLabel}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#E0B878" />
+                                    </Button>
+                                    <TextBlock DockPanel.Dock="Right"
+                                               Text="{Binding Size}"
+                                               Margin="12,0,0,0"
+                                               FontSize="12"
+                                               Foreground="#8FBF9A"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock DockPanel.Dock="Right"
+                                               Text="{Binding Mime}"
+                                               Margin="12,0,0,0"
+                                               FontSize="12"
+                                               Foreground="#7FA8D4"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding HasMime}" />
+                                    <TextBlock Text="{Binding Name}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    </TabItem>
+                    <TabItem Header="Manifest">
+                        <DockPanel>
+                            <CheckBox x:Name="ManifestCheck"
+                                      DockPanel.Dock="Top"
+                                      HorizontalAlignment="Left"
+                                      Margin="0,0,0,12"
+                                      Content="Manifest"
+                                      VerticalAlignment="Center"
+                                      IsChecked="False"
+                                      Checked="ManifestCheckChanged"
+                                      Unchecked="ManifestCheckChanged" />
+                            <Button x:Name="ClearManifestButton"
+                                    DockPanel.Dock="Bottom"
+                                    Classes="clear"
+                                    HorizontalAlignment="Right"
+                                    Margin="0,14,0,0"
+                                    IsEnabled="False"
+                                    Click="ClearManifestForm"
+                                    ToolTip.Tip="Clear the manifest form">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ic:SymbolIcon Symbol="Eraser"
+                                                   IconVariant="Filled"
+                                                   FontSize="16"
+                                                   Foreground="#C8B8A8"
+                                                   VerticalAlignment="Center" />
+                                    <TextBlock Text="Clear"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="#E8DFD6"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                          VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="ManifestFields"
+                                            Spacing="10"
+                                            Opacity="0.5"
+                                            IsEnabled="False">
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Name" />
+                                        <TextBox x:Name="ManifestNameBox" LostFocus="ManifestFieldChanged" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Slug" />
+                                        <TextBox x:Name="ManifestSlugBox"
+                                                 Watermark="auto from Name"
+                                                 GotFocus="ManifestSlugBoxGotFocus"
+                                                 LostFocus="ManifestFieldChanged" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Max role level" />
+                                        <TextBox x:Name="ManifestRoleBox" Watermark="empty = any" LostFocus="ManifestFieldChanged" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Tone" />
+                                        <ComboBox x:Name="ManifestToneBox" SelectedIndex="0" SelectionChanged="ManifestToneChanged">
+                                            <ComboBoxItem Tag="stone"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#5D0F39" VerticalAlignment="Center" /><TextBlock Text="Tyrian Purple" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="red"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#EF4444" VerticalAlignment="Center" /><TextBlock Text="Red" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="orange"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#F97316" VerticalAlignment="Center" /><TextBlock Text="Orange" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="amber"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#F59E0B" VerticalAlignment="Center" /><TextBlock Text="Amber" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="yellow"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#EAB308" VerticalAlignment="Center" /><TextBlock Text="Yellow" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="lime"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#84CC16" VerticalAlignment="Center" /><TextBlock Text="Lime" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="green"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#22C55E" VerticalAlignment="Center" /><TextBlock Text="Green" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="emerald"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#10B981" VerticalAlignment="Center" /><TextBlock Text="Emerald" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="teal"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#14B8A6" VerticalAlignment="Center" /><TextBlock Text="Teal" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="cyan"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#06B6D4" VerticalAlignment="Center" /><TextBlock Text="Cyan" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="sky"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#0EA5E9" VerticalAlignment="Center" /><TextBlock Text="Sky" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="blue"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#3B82F6" VerticalAlignment="Center" /><TextBlock Text="Blue" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="indigo"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#6366F1" VerticalAlignment="Center" /><TextBlock Text="Indigo" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="violet"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#8B5CF6" VerticalAlignment="Center" /><TextBlock Text="Violet" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="fuchsia"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#D946EF" VerticalAlignment="Center" /><TextBlock Text="Fuchsia" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="pink"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#EC4899" VerticalAlignment="Center" /><TextBlock Text="Pink" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="rose"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#F43F5E" VerticalAlignment="Center" /><TextBlock Text="Rose" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="slate"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#64748B" VerticalAlignment="Center" /><TextBlock Text="Slate" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                            <ComboBoxItem Tag="zinc"><StackPanel Orientation="Horizontal" Spacing="8"><Border Width="12" Height="12" CornerRadius="2" Background="#71717A" VerticalAlignment="Center" /><TextBlock Text="Zinc" VerticalAlignment="Center" /></StackPanel></ComboBoxItem>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Icon" />
+                                        <Border HorizontalAlignment="Left"
+                                                Background="#3A322C"
+                                                BorderBrush="#5A4E46"
+                                                BorderThickness="1"
+                                                CornerRadius="12"
+                                                Padding="8">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Border Width="88"
+                                                        Height="88"
+                                                        Background="#1A1614"
+                                                        BorderBrush="#4A423C"
+                                                        BorderThickness="1"
+                                                        CornerRadius="8"
+                                                        VerticalAlignment="Center">
+                                                    <Image x:Name="ManifestIconImage"
+                                                           Width="70"
+                                                           Height="70"
+                                                           Stretch="Uniform"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Spacing="6" VerticalAlignment="Center">
+                                                    <Button Classes="clear accent" Click="ChooseManifestIcon" ToolTip.Tip="Open an icon file" HorizontalAlignment="Stretch">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <ic:SymbolIcon Symbol="Image"
+                                                                           IconVariant="Filled"
+                                                                           FontSize="16"
+                                                                           Foreground="#F3EDE6"
+                                                                           VerticalAlignment="Center" />
+                                                            <TextBlock Text="Open"
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#F3EDE6"
+                                                                       VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button Classes="clear" Click="ClearManifestIcon" ToolTip.Tip="Remove the icon" HorizontalAlignment="Stretch" Padding="10,9" MinWidth="0">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <ic:SymbolIcon Symbol="Delete"
+                                                                           IconVariant="Regular"
+                                                                           FontSize="16"
+                                                                           Foreground="#E8DFD6"
+                                                                           VerticalAlignment="Center" />
+                                                            <TextBlock Text="Remove"
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#E8DFD6"
+                                                                       VerticalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                    <Border Background="#25201C"
+                                            BorderBrush="#3F3731"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="12,10">
+                                        <StackPanel Spacing="8">
+                                            <CheckBox x:Name="ManifestSystemCheck" Content="System" HorizontalAlignment="Left" IsChecked="False" Checked="ManifestFieldChanged" Unchecked="ManifestFieldChanged" />
+                                            <CheckBox x:Name="ManifestActiveCheck" Content="Active" HorizontalAlignment="Left" IsChecked="True" Checked="ManifestFieldChanged" Unchecked="ManifestFieldChanged" />
+                                            <CheckBox x:Name="ManifestVisibleCheck" Content="Visible" HorizontalAlignment="Left" IsChecked="True" Checked="ManifestFieldChanged" Unchecked="ManifestFieldChanged" />
+                                            <CheckBox x:Name="ManifestDashboardCheck" Content="Dashboard" HorizontalAlignment="Left" IsChecked="True" Checked="ManifestFieldChanged" Unchecked="ManifestFieldChanged" />
+                                            <CheckBox x:Name="ManifestSectionCheck" Content="Section" HorizontalAlignment="Left" IsChecked="True" Checked="ManifestFieldChanged" Unchecked="ManifestFieldChanged" />
+                                            <CheckBox x:Name="ManifestLockedCheck" Content="Locked" HorizontalAlignment="Left" IsChecked="False" Checked="ManifestFieldChanged" Unchecked="ManifestFieldChanged" />
+                                        </StackPanel>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Label" />
+                                        <TextBox x:Name="ManifestLabelBox" LostFocus="ManifestFieldChanged" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Classes="label" Text="Section caption" />
+                                        <TextBox x:Name="ManifestCaptionBox" LostFocus="ManifestFieldChanged" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </TabItem>
+                    <TabItem Header="Scripts">
+                        <DockPanel>
+                            <ListBox x:Name="ScriptList"
+                                     DockPanel.Dock="Top"
+                                     Height="120"
+                                     Margin="0,0,0,8"
+                                     SelectionChanged="ScriptListSelectionChanged">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal"
+                                                    Spacing="8"
+                                                    IsHitTestVisible="False">
+                                            <Image Source="{Binding Icon}"
+                                                   Width="16"
+                                                   Height="16"
+                                                   Stretch="Uniform"
+                                                   VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Label}"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel DockPanel.Dock="Top"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        Margin="0,0,0,8">
+                                <Button x:Name="NewScriptButton"
+                                        Classes="clear"
+                                        Click="NewScript"
+                                        ToolTip.Tip="Clear selection and choose kind / lifecycle for a new script">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ic:SymbolIcon Symbol="Document"
+                                                       IconVariant="Filled"
+                                                       FontSize="16"
+                                                       Foreground="#C8B8A8"
+                                                       VerticalAlignment="Center" />
+                                        <TextBlock Text="New"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#E8DFD6"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="AddScriptButton"
+                                        Classes="clear"
+                                        Click="AddScript"
+                                        ToolTip.Tip="Add script">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ic:SymbolIcon Symbol="Add"
+                                                       IconVariant="Filled"
+                                                       FontSize="16"
+                                                       Foreground="#8FBF8F"
+                                                       VerticalAlignment="Center" />
+                                        <TextBlock Text="Add"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#E8DFD6"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="RemoveScriptButton"
+                                        Classes="clear"
+                                        Click="RemoveScript"
+                                        ToolTip.Tip="Remove selected script">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ic:SymbolIcon Symbol="Delete"
+                                                       IconVariant="Filled"
+                                                       FontSize="16"
+                                                       Foreground="#E07070"
+                                                       VerticalAlignment="Center" />
+                                        <TextBlock Text="Remove"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#E8DFD6"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right"
+                                            Orientation="Horizontal"
+                                            Spacing="8"
+                                            Margin="10,0,0,0">
+                                    <Button x:Name="OpenScriptButton"
+                                            Classes="clear"
+                                            Click="OpenScript"
+                                            ToolTip.Tip="Open script file">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <ic:SymbolIcon Symbol="Open"
+                                                           IconVariant="Filled"
+                                                           FontSize="16"
+                                                           Foreground="#C8B8A8"
+                                                           VerticalAlignment="Center" />
+                                            <TextBlock Text="Open"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#E8DFD6"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="SaveScriptButton"
+                                            Classes="clear"
+                                            Click="SavePackage"
+                                            IsEnabled="False"
+                                            ToolTip.Tip="Save changes to the open .mpx">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <ic:SymbolIcon Symbol="Checkmark"
+                                                           IconVariant="Filled"
+                                                           FontSize="16"
+                                                           Foreground="#8FBF8F"
+                                                           VerticalAlignment="Center" />
+                                            <TextBlock Text="Save"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#E8DFD6"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,8,*">
+                                    <ComboBox x:Name="ScriptTriggerBox"
+                                              Grid.Column="0"
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="ScriptTriggerChanged">
+                                        <ComboBoxItem Content="Manual" Tag="Manual" />
+                                        <ComboBoxItem Content="Before Mount" Tag="BeforeMount" />
+                                        <ComboBoxItem Content="On Mount" Tag="OnMount" />
+                                        <ComboBoxItem Content="On Start" Tag="OnStart" />
+                                        <ComboBoxItem Content="Before Unmount" Tag="BeforeUnmount" />
+                                        <ComboBoxItem Content="On Unmount" Tag="OnUnmount" />
+                                    </ComboBox>
+                                    <ComboBox x:Name="ScriptKindBox"
+                                              Grid.Column="2"
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="ScriptKindChanged">
+                                        <ComboBoxItem Content="JS" Tag="JS" />
+                                        <ComboBoxItem Content="Web Assembly" Tag="Wasm" />
+                                        <ComboBoxItem Content="MySQL" Tag="MySql" />
+                                        <ComboBoxItem Content="PostgreSQL" Tag="PostgreSql" />
+                                        <ComboBoxItem Content="SQLite" Tag="Sqlite" />
+                                        <ComboBoxItem Content="LUA" Tag="Lua" />
+                                    </ComboBox>
+                                </Grid>
+                            </DockPanel>
+                            <Border Classes="editor-frame"
+                                    VerticalAlignment="Stretch"
+                                    HorizontalAlignment="Stretch">
+                                <ae:TextEditor x:Name="ScriptEditor"
+                                               FontFamily="Cascadia Code, Consolas, 'Courier New', monospace"
+                                               FontSize="14"
+                                               ShowLineNumbers="True"
+                                               WordWrap="False"
+                                               HorizontalScrollBarVisibility="Auto"
+                                               VerticalScrollBarVisibility="Auto"
+                                               VerticalAlignment="Stretch"
+                                               HorizontalAlignment="Stretch"
+                                               Background="Transparent"
+                                               Foreground="#ABB2BF" />
+                            </Border>
+                        </DockPanel>
+                    </TabItem>
+            </TabControl>
+        </Grid>
+    </DockPanel>
+</Window>

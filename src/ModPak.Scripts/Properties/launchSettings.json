@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Mp64 demo": {
+      "commandName": "Project",
+      "commandLineArgs": "mp64"
+    },
+    "ModPak demo": {
+      "commandName": "Project",
+      "commandLineArgs": "modpak"
+    }
+  }
+}

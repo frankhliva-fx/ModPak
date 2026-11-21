@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ModPak.Scripts</RootNamespace>
+    <AssemblyName>ModPak.Scripts</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <!-- F5 runs Mp64 demo by default; pass ModPak as arg for the other script. -->
+    <StartupObject>ModPak.Scripts.Program</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\scripts\Mp64.fsx" Link="scripts\Mp64.fsx" />
+    <None Include="..\..\scripts\ModPak.fsx" Link="scripts\ModPak.fsx" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ModPak\ModPak.fsproj" />
+  </ItemGroup>
+  <Target Name="RunMp64Fsx" DependsOnTargets="Build">
+    <Exec Command="dotnet fsi &quot;$(MSBuildThisFileDirectory)..\..\scripts\Mp64.fsx&quot;" WorkingDirectory="$(MSBuildThisFileDirectory)..\..\scripts" />
+  </Target>
+  <Target Name="RunModPakFsx" DependsOnTargets="Build">
+    <Exec Command="dotnet fsi &quot;$(MSBuildThisFileDirectory)..\..\scripts\ModPak.fsx&quot;" WorkingDirectory="$(MSBuildThisFileDirectory)..\..\scripts" />
+  </Target>
+</Project>

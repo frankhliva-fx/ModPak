@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <RootNamespace>ModPak</RootNamespace>
+    <AssemblyName>ModPak</AssemblyName>
+    <Product>ModPak</Product>
+    <!-- So FSI / #r ModPak.dll can resolve LZMA + LZ4 next to the assembly. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Hash.fs" />
+    <Compile Include="FileMeta.fs" />
+    <Compile Include="Mime.fs" />
+    <Compile Include="Manifest.fs" />
+    <Compile Include="Codec.fs" />
+    <Compile Include="Mp64.fs" />
+    <Compile Include="Pack.fs" />
+    <Compile Include="Unpack.fs" />
+    <Compile Include="Validate.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="K4os.Compression.LZ4" Version="1.3.8" />
+    <PackageReference Include="Lzma.Net" Version="5.8.4.3" />
+    <PackageReference Include="MimeTypesMap" Version="1.0.9" />
+    <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+  </ItemGroup>
+</Project>
