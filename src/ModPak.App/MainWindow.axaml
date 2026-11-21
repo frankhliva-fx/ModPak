@@ -84,7 +84,7 @@
                             Classes="tool"
                             Click="UnpackPackage"
                             IsEnabled="False"
-                            ToolTip.Tip="Unpak selected files">
+                            ToolTip.Tip="Copy the selection into the Explorer folder">
                         <StackPanel Spacing="4">
                             <ic:SymbolIcon Symbol="ArrowSquareDown"
                                            IconVariant="Color"
@@ -99,7 +99,7 @@
                             Classes="tool"
                             Click="UnpackAllPackage"
                             IsEnabled="False"
-                            ToolTip.Tip="Unpak all files">
+                            ToolTip.Tip="Copy everything into the Explorer folder">
                         <StackPanel Spacing="4">
                             <ic:SymbolIcon Symbol="ArrowSquareDown"
                                            IconVariant="Color"
@@ -176,44 +176,57 @@
             </DockPanel>
         </Border>
 
-        <Grid DockPanel.Dock="Bottom"
+        <Grid x:Name="FnBar"
+              DockPanel.Dock="Bottom"
               Margin="0,14,0,0"
               ColumnDefinitions="*,*,*,*,*,*"
               ColumnSpacing="6">
-            <Button Classes="fn"
+            <Button x:Name="FnInfoButton"
+                    Classes="fn"
                     Grid.Column="0"
-                    Click="FnInfo"
-                    ToolTip.Tip="Show info for the active pane">
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnInfo">
                 <TextBlock Text="F1  Info" HorizontalAlignment="Center" />
             </Button>
-            <Button Classes="fn"
+            <Button x:Name="FnCopyButton"
+                    Classes="fn"
                     Grid.Column="1"
-                    Click="FnCopy"
-                    ToolTip.Tip="Copy between Explorer and Package">
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnCopy">
                 <TextBlock Text="F5  Copy" HorizontalAlignment="Center" />
             </Button>
-            <Button Classes="fn"
+            <Button x:Name="FnMoveButton"
+                    Classes="fn"
                     Grid.Column="2"
-                    Click="FnMove"
-                    ToolTip.Tip="Move between Explorer and Package">
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnMove">
                 <TextBlock Text="F6  Move" HorizontalAlignment="Center" />
             </Button>
-            <Button Classes="fn"
+            <Button x:Name="FnMkdirButton"
+                    Classes="fn"
                     Grid.Column="3"
-                    Click="FnMkdir"
-                    ToolTip.Tip="Create a folder in the active pane">
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnMkdir">
                 <TextBlock Text="F7  MkDir" HorizontalAlignment="Center" />
             </Button>
-            <Button Classes="fn"
+            <Button x:Name="FnDeleteButton"
+                    Classes="fn"
                     Grid.Column="4"
-                    Click="FnDelete"
-                    ToolTip.Tip="Delete selection in the active pane">
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnDelete">
                 <TextBlock Text="F8  Delete" HorizontalAlignment="Center" />
             </Button>
-            <Button Classes="fn accent"
+            <Button x:Name="FnQuitButton"
+                    Classes="fn accent"
                     Grid.Column="5"
-                    Click="FnQuit"
-                    ToolTip.Tip="Quit ModPak">
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnQuit">
                 <TextBlock Text="Alt+F4  Quit" HorizontalAlignment="Center" />
             </Button>
         </Grid>

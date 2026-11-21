@@ -30,18 +30,18 @@ type FileListItem
         isDirectory: bool,
         isParent: bool
     ) =
-    member _.Icon = icon
-    member _.Name = name
-    member _.Mime = mime
-    member _.Size = size
-    member _.Codec = codec
-    member _.PathKey = pathKey
-    member _.IsDirectory = isDirectory
-    member _.IsParent = isParent
-    member _.CanChangeCodec = canChangeCodec && not isDirectory && not isParent
-    member _.HasMime = not isDirectory && not isParent && not (String.IsNullOrWhiteSpace mime)
-    member _.ShowCodec = canChangeCodec && not isDirectory && not isParent
-    member _.CodecLabel =
+    member self.Icon = icon
+    member self.Name = name
+    member self.Mime = mime
+    member self.Size = size
+    member self.Codec = codec
+    member self.PathKey = pathKey
+    member self.IsDirectory = isDirectory
+    member self.IsParent = isParent
+    member self.CanChangeCodec = canChangeCodec && not isDirectory && not isParent
+    member self.HasMime = not isDirectory && not isParent && not (String.IsNullOrWhiteSpace mime)
+    member self.ShowCodec = canChangeCodec && not isDirectory && not isParent
+    member self.CodecLabel =
         match codec with
         | 0uy -> "none"
         | 1uy -> "lzma"
@@ -247,17 +247,17 @@ type WindowsShellFileIconProvider() =
             | icon -> icon
 
     interface IFileIconProvider with
-        member _.GetIcon(pathOrExtension) =
+        member self.GetIcon(pathOrExtension) =
             let key = extensionKey pathOrExtension
             cache.GetOrAdd(key, fun _ -> load pathOrExtension)
 
-        member _.GetFolderIcon() =
+        member self.GetFolderIcon() =
             if not folderIconLoaded then
                 folderIcon <- loadIcon "folder" Shell32.FILE_ATTRIBUTE_DIRECTORY
                 folderIconLoaded <- true
             folderIcon
 
-        member _.GetDriveIcon(driveRootPath) =
+        member self.GetDriveIcon(driveRootPath) =
             let key = normalizeDriveRoot driveRootPath
             if key = "" then null
             else driveCache.GetOrAdd(key, fun root -> loadDriveIcon root)
@@ -265,9 +265,9 @@ type WindowsShellFileIconProvider() =
 /// Placeholder provider for non-Windows (swap for theme icons later).
 type FallbackFileIconProvider() =
     interface IFileIconProvider with
-        member _.GetIcon(_pathOrExtension) = null
-        member _.GetFolderIcon() = null
-        member _.GetDriveIcon(_driveRootPath) = null
+        member self.GetIcon(_pathOrExtension) = null
+        member self.GetFolderIcon() = null
+        member self.GetDriveIcon(_driveRootPath) = null
 
 module FileIconProvider =
 
