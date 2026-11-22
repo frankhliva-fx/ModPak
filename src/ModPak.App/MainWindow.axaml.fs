@@ -86,11 +86,14 @@ type MainWindow() as self =
     let mutable fileList: ListBox = null
     let mutable diskList: ListBox = null
     let mutable diskPathBox: TextBox = null
+    let mutable packagePathBox: TextBox = null
+    let mutable suppressPackagePathUi = false
     let mutable explorerMultiSelectionCheck: CheckBox = null
     let mutable packageMultiSelectionCheck: CheckBox = null
     let mutable suppressExplorerMultiSelectionPersist = false
     let mutable unpackButton: Button = null
     let mutable unpackAllButton: Button = null
+    let mutable closePackageButton: Button = null
     let mutable saveButton: Button = null
     let mutable infoButton: Button = null
     let mutable openMenuItem: MenuItem = null
@@ -204,10 +207,12 @@ type MainWindow() as self =
         fileList <- self.FindControl<ListBox>("FileList")
         diskList <- self.FindControl<ListBox>("DiskList")
         diskPathBox <- self.FindControl<TextBox>("DiskPathBox")
+        packagePathBox <- self.FindControl<TextBox>("PackagePathBox")
         explorerMultiSelectionCheck <- self.FindControl<CheckBox>("ExplorerMultiSelectionCheck")
         packageMultiSelectionCheck <- self.FindControl<CheckBox>("PackageMultiSelectionCheck")
         unpackButton <- self.FindControl<Button>("UnpackButton")
         unpackAllButton <- self.FindControl<Button>("UnpackAllButton")
+        closePackageButton <- self.FindControl<Button>("ClosePackageButton")
         saveButton <- self.FindControl<Button>("SaveButton")
         infoButton <- self.FindControl<Button>("InfoButton")
         openMenuItem <- self.FindControl<MenuItem>("OpenMenuItem")
@@ -1189,19 +1194,23 @@ type MainWindow() as self =
             Child = canvas,
             VerticalAlignment = VerticalAlignment.Center)
 
-    member private self.DialogButtonContent(label: string, symbol: Symbol) =
-        let row =
-            StackPanel(
-                Orientation = Orientation.Horizontal,
-                Spacing = 8.0,
-                HorizontalAlignment = HorizontalAlignment.Center)
-        row.Children.Add(
+    member private self.DialogButtonContent(label: string, symbol: Symbol, ?mirror: bool) =
+        let icon =
             SymbolIcon(
                 Symbol = symbol,
                 IconVariant = IconVariant.Regular,
                 FontSize = 16.0,
                 Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
-                VerticalAlignment = VerticalAlignment.Center))
+                VerticalAlignment = VerticalAlignment.Center)
+        if defaultArg mirror false then
+            icon.RenderTransformOrigin <- RelativePoint(0.5, 0.5, RelativeUnit.Relative)
+            icon.RenderTransform <- ScaleTransform(ScaleX = -1.0, ScaleY = 1.0)
+        let row =
+            StackPanel(
+                Orientation = Orientation.Horizontal,
+                Spacing = 8.0,
+                HorizontalAlignment = HorizontalAlignment.Center)
+        row.Children.Add icon
         row.Children.Add(
             TextBlock(
                 Text = label,
@@ -1224,9 +1233,9 @@ type MainWindow() as self =
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center)
 
-    member private self.DialogAccentIconButton(label: string, symbol: Symbol) =
+    member private self.DialogAccentIconButton(label: string, symbol: Symbol, ?mirror: bool) =
         let button = self.DialogAccentButton(label)
-        button.Content <- self.DialogButtonContent(label, symbol)
+        button.Content <- self.DialogButtonContent(label, symbol, defaultArg mirror false)
         button.MinWidth <- 108.0
         button
 
@@ -1275,8 +1284,8 @@ type MainWindow() as self =
                 Orientation = Orientation.Horizontal,
                 Spacing = 8.0,
                 HorizontalAlignment = HorizontalAlignment.Right)
-        buttons.Children.Add(primary)
         buttons.Children.Add(secondary)
+        buttons.Children.Add(primary)
         buttons
 
     member private self.DialogButtonRow3(ok: Button, cancel: Button, apply: Button) =
@@ -1285,9 +1294,9 @@ type MainWindow() as self =
                 Orientation = Orientation.Horizontal,
                 Spacing = 8.0,
                 HorizontalAlignment = HorizontalAlignment.Right)
-        buttons.Children.Add(ok)
         buttons.Children.Add(cancel)
         buttons.Children.Add(apply)
+        buttons.Children.Add(ok)
         buttons
 
     member private self.WrapStudioDialog(title: string, root: Control) =
@@ -1358,9 +1367,9 @@ type MainWindow() as self =
                     Orientation = Orientation.Horizontal,
                     Spacing = 8.0,
                     HorizontalAlignment = HorizontalAlignment.Right)
-            buttons.Children.Add(saveBtn)
             buttons.Children.Add(discardBtn)
             buttons.Children.Add(cancelBtn)
+            buttons.Children.Add(saveBtn)
             let root = StackPanel(Margin = Thickness(22.0))
             root.Children.Add(message)
             root.Children.Add(buttons)
@@ -1414,11 +1423,7 @@ type MainWindow() as self =
                                     Title = "Save ModPak",
                                     SuggestedFileName = slug + ModPakFormat.Extension,
                                     DefaultExtension = "mpx",
-                                    FileTypeChoices =
-                                        [|
-                                            FilePickerFileType("ModPak", Patterns = [| "*.mpx" |])
-                                            FilePickerFileType("ModPak (all)", Patterns = ModPakFormat.OpenPatterns)
-                                        |]
+                                    FileTypeChoices = [| self.ModPakPackageFileType() |]
                                 )
                             if not (isNull startSave) then
                                 saveOptions.SuggestedStartLocation <- startSave
@@ -1451,6 +1456,62 @@ type MainWindow() as self =
         allowClose <- true
         closePromptInFlight <- false
         self.Close()
+
+    member private self.HasOpenPackage() =
+        packagePath.IsSome
+        || package.IsSome
+        || not pendingPaths.IsEmpty
+        || self.IncludeManifest()
+
+    member private self.ClearOpenPackage() =
+        pendingPaths <- []
+        pendingRenames <- Map.empty
+        package <- None
+        packagePath <- None
+        fileCodecs <- Map.empty
+        explorerDir <- ""
+        selectedScriptIndex <- -1
+        suppressManifestPersist <- true
+        try
+            self.FillManifestForm(Manifest.empty())
+            self.RememberManifestIcon([||], "", "")
+            if not (isNull manifestCheck) then
+                manifestCheck.IsChecked <- Nullable(false)
+            self.ApplyManifestEnabled()
+        finally
+            suppressManifestPersist <- false
+        self.ClearDirty()
+        self.RefreshScriptList()
+        self.LoadScriptEditor()
+        self.RefreshExplorer()
+        self.UpdateWindowTitle()
+        self.UpdateFileActionsEnabled()
+
+    member private self.ClosePackage(_: obj, _: RoutedEventArgs) =
+        async {
+            if not (self.HasOpenPackage()) then
+                self.Show("No package is open.", muteBrush)
+            elif self.CanSavePackage() then
+                let documentName =
+                    match packagePath with
+                    | Some path when not (String.IsNullOrWhiteSpace path) -> Path.GetFileName path
+                    | _ -> "Untitled"
+                let! choice = self.ShowSaveChangesDialog documentName |> Async.AwaitTask
+                match choice with
+                | 0 ->
+                    let! saved = self.TrySaveForClose() |> Async.AwaitTask
+                    if saved then
+                        self.ClearOpenPackage()
+                        self.Show("Package closed.", muteBrush)
+                | 1 ->
+                    self.ClearOpenPackage()
+                    self.Show("Package closed.", muteBrush)
+                | _ -> ()
+            else
+                self.ClearOpenPackage()
+                self.Show("Package closed.", muteBrush)
+        }
+        |> Async.StartImmediate
 
     member private self.OnMainWindowClosing(e: WindowClosingEventArgs) =
         self.PersistMetadataUi()
@@ -1792,10 +1853,104 @@ type MainWindow() as self =
             fileList.ItemsSource <- rows
             self.UpdateFileActionsEnabled()
             self.RefreshPaneStatusSlots()
+            self.SetPackagePathLabel(self.PackageLocationText())
+
+    member private self.PackageArchivePrefix() =
+        match packagePath with
+        | Some path when not (String.IsNullOrWhiteSpace path) ->
+            path.TrimEnd('\\', '/')
+        | _ -> ""
+
+    /// `e:\arc.mpx://` at the package root, `e:\arc.mpx://Manual/BBB/` inside a folder.
+    /// An unsaved package uses `mpx://` instead of a file path.
+    member private self.PackageLocationText() =
+        let virt = Pathing.normalize explorerDir
+        let tail = if virt = "" then "://" else "://" + virt + "/"
+        let prefix = self.PackageArchivePrefix()
+        if prefix = "" then "mpx" + tail else prefix + tail
+
+    member private self.SetPackagePathInputValid(ok: bool) =
+        if not (isNull packagePathBox) then
+            if ok then
+                packagePathBox.Classes.Remove "path-invalid" |> ignore
+                packagePathBox.BorderBrush <- diskPathOkBrush
+            else
+                if not (packagePathBox.Classes.Contains "path-invalid") then
+                    packagePathBox.Classes.Add "path-invalid"
+                packagePathBox.BorderBrush <- diskPathBadBrush
+
+    /// `Some virtualDir` when the text is this package and the folder exists. Root is `Some ""`.
+    member private self.TryPackageLocation(text: string) =
+        let raw = if isNull text then "" else text.Trim()
+        if raw = "" then
+            None
+        else
+            let prefix = self.PackageArchivePrefix()
+            let rest =
+                if prefix <> "" && raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) then
+                    raw.Substring(prefix.Length)
+                elif prefix = "" then
+                    raw
+                else
+                    null
+            if isNull rest then
+                None
+            else
+                let afterSep =
+                    let trimmed = rest.Trim()
+                    if prefix = "" && trimmed.StartsWith("mpx://", StringComparison.OrdinalIgnoreCase) then
+                        trimmed.Substring(6)
+                    elif trimmed.StartsWith("://") then
+                        trimmed.Substring(3)
+                    elif trimmed.StartsWith(":") then
+                        trimmed.Substring(1).Trim()
+                    else
+                        trimmed
+                let virt =
+                    afterSep.Replace('\\', '/')
+                    |> fun value -> value.Trim('/')
+                    |> Pathing.normalize
+                if virt = "" || self.IsVirtualDirectory virt then
+                    Some virt
+                else
+                    None
+
+    member private self.SetPackagePathLabel(text: string) =
+        if not (isNull packagePathBox) then
+            suppressPackagePathUi <- true
+            try
+                packagePathBox.Text <- if isNull text then "" else text
+                self.SetPackagePathInputValid true
+            finally
+                suppressPackagePathUi <- false
+
+    member private self.PackagePathBoxTextChanged(_: obj, _: TextChangedEventArgs) =
+        if not suppressPackagePathUi && not (isNull packagePathBox) then
+            self.SetPackagePathInputValid(self.TryPackageLocation(packagePathBox.Text).IsSome)
+
+    member private self.ApplyPackagePathFromInput() =
+        if isNull packagePathBox then
+            ()
+        else
+            match self.TryPackageLocation packagePathBox.Text with
+            | Some virt ->
+                self.SetPackagePathInputValid true
+                self.NavigateExplorer virt
+            | None -> self.SetPackagePathInputValid false
+
+    member private self.ApplyPackagePathClick(_: obj, _: RoutedEventArgs) =
+        self.ApplyPackagePathFromInput()
+
+    member private self.PackagePathBoxKeyDown(_: obj, e: KeyEventArgs) =
+        if e.Key = Key.Enter || e.Key = Key.Return then
+            self.ApplyPackagePathFromInput()
+            e.Handled <- true
 
     member private self.NavigateExplorer(dirPath: string) =
         explorerDir <- Pathing.normalize dirPath
         self.RefreshExplorer()
+        if not (isNull fileList) then
+            fileList.UnselectAll()
 
     member private self.SetDiskPathInputValid(ok: bool) =
         if not (isNull diskPathBox) then
@@ -1843,6 +1998,16 @@ type MainWindow() as self =
 
     member private self.ApplyDiskPathClick(_: obj, _: RoutedEventArgs) =
         self.ApplyDiskPathFromInput()
+
+    member private self.GoExplorerHomeClick(_: obj, _: RoutedEventArgs) =
+        let home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
+        if not (String.IsNullOrWhiteSpace home) && Directory.Exists home then
+            self.NavigateDisk home
+        else
+            self.Show("Home folder was not found.", errBrush)
+
+    member private self.GoPackageRootClick(_: obj, _: RoutedEventArgs) =
+        self.NavigateExplorer ""
 
     member private self.DiskPathBoxKeyDown(_: obj, e: KeyEventArgs) =
         if e.Key = Key.Enter || e.Key = Key.Return then
@@ -2260,16 +2425,31 @@ type MainWindow() as self =
         pkgPressKept <- false
         pkgPressRow <- null
 
-    member private self.PackageSelectionKeys() =
+    /// Selected rows that are still in the list. Ignores a folder left selected after opening it.
+    member private self.LiveSelectedPackageRows() : FileListItem list =
         if isNull fileList then
             []
         else
+            let current =
+                match fileList.ItemsSource with
+                | :? seq<FileListItem> as rows ->
+                    Some(rows |> Seq.map (fun row -> row.PathKey.ToLowerInvariant()) |> Set.ofSeq)
+                | _ -> None
             [
                 for item in fileList.SelectedItems do
                     match item with
-                    | :? FileListItem as row when not row.IsParent -> yield row.PathKey
+                    | :? FileListItem as row ->
+                        match current with
+                        | None -> yield row
+                        | Some keys when keys.Contains(row.PathKey.ToLowerInvariant()) -> yield row
+                        | Some _ -> ()
                     | _ -> ()
             ]
+
+    member private self.PackageSelectionKeys() =
+        self.LiveSelectedPackageRows()
+        |> List.filter (fun row -> not row.IsParent)
+        |> List.map (fun row -> row.PathKey)
 
     member private self.FileListPointerPressed(_: obj, e: PointerPressedEventArgs) =
         explorerPaneActive <- false
@@ -2469,6 +2649,10 @@ type MainWindow() as self =
         |> Seq.distinctBy (fun (full, rel, _) -> (full.ToLowerInvariant()) + "|" + rel.ToLowerInvariant())
         |> Seq.sortBy (fun (_, rel, _) -> rel)
         |> Seq.toList
+
+    member private self.ModPakPackageFileType() =
+        let listed = String.concat ", " ModPakFormat.OpenPatterns
+        FilePickerFileType($"ModPak ({listed})", Patterns = ModPakFormat.OpenPatterns)
 
     member private self.IsModPakPackagePath(path: string) =
         let ext = Path.GetExtension path
@@ -2746,10 +2930,44 @@ type MainWindow() as self =
             |> Async.StartImmediate
         | _ -> self.Show("Select a file or folder to rename.", muteBrush)
 
+    member private self.OpenArchiveFullPath() =
+        match packagePath with
+        | Some path when not (String.IsNullOrWhiteSpace path) ->
+            try
+                Some(Path.GetFullPath path)
+            with _ ->
+                Some path
+        | _ -> None
+
+    /// The open .mpx, or a folder that contains it.
+    member private self.HitsOpenArchive(path: string) =
+        match self.OpenArchiveFullPath() with
+        | None -> false
+        | Some archive ->
+            let full =
+                try
+                    Path.GetFullPath path
+                with _ ->
+                    path
+            if String.Equals(full, archive, StringComparison.OrdinalIgnoreCase) then
+                true
+            elif Directory.Exists full then
+                let prefix =
+                    full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    + string Path.DirectorySeparatorChar
+                archive.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            else
+                false
+
+    member private self.RootsHitOpenArchive(roots: string list) =
+        roots |> List.exists self.HitsOpenArchive
+
     member private self.DeleteSelectedDiskItems(_: obj, _: RoutedEventArgs) =
         let roots = self.SelectedDiskRoots()
         if roots.IsEmpty then
             self.Show("Select files or folders to delete.", muteBrush)
+        elif self.RootsHitOpenArchive roots then
+            self.Show("Close the open package before deleting it.", errBrush)
         else
             async {
                 let label = if roots.Length = 1 then "item" else "items"
@@ -2839,15 +3057,18 @@ type MainWindow() as self =
     member private self.DeleteDiskRootsQuiet(roots: string list) =
         let mutable removed = 0
         for path in roots do
-            try
-                if Directory.Exists path then
-                    Directory.Delete(path, true)
-                    removed <- removed + 1
-                elif File.Exists path then
-                    File.Delete path
-                    removed <- removed + 1
-            with _ ->
+            if self.HitsOpenArchive path then
                 ()
+            else
+                try
+                    if Directory.Exists path then
+                        Directory.Delete(path, true)
+                        removed <- removed + 1
+                    elif File.Exists path then
+                        File.Delete path
+                        removed <- removed + 1
+                with _ ->
+                    ()
         if removed > 0 then
             self.RefreshDiskExplorer()
         removed
@@ -2897,9 +3118,7 @@ type MainWindow() as self =
                 config.Save())
             let cancelBtn = self.DialogCommandIconButton("Cancel", Symbol.Dismiss)
             let copyBtn =
-                self.DialogAccentIconButton(
-                    actionLabel,
-                    if moveMode then Symbol.ArrowRight else Symbol.Copy)
+                self.DialogAccentIconButton(actionLabel, Symbol.ArrowRight)
             let buttons =
                 DockPanel(LastChildFill = false, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
             DockPanel.SetDock(cancelBtn, Dock.Left)
@@ -3090,40 +3309,41 @@ type MainWindow() as self =
 
     /// Selected package files only (not folders / `..`).
     member private self.SelectedPathKeys() =
-        if isNull fileList then
-            []
-        else
-            [
-                for item in fileList.SelectedItems do
-                    match item with
-                    | :? FileListItem as row when not row.IsDirectory && not row.IsParent ->
-                        yield row.PathKey
-                    | _ -> ()
-            ]
+        self.LiveSelectedPackageRows()
+        |> List.filter (fun row -> not row.IsDirectory && not row.IsParent)
+        |> List.map (fun row -> row.PathKey)
 
     /// Selected package files and folders (not `..`) — for rename / delete.
     member private self.SelectedEntryPathKeys() =
-        if isNull fileList then
-            []
-        else
-            [
-                for item in fileList.SelectedItems do
-                    match item with
-                    | :? FileListItem as row when not row.IsParent ->
-                        yield row.PathKey
-                    | _ -> ()
-            ]
+        self.LiveSelectedPackageRows()
+        |> List.filter (fun row -> not row.IsParent)
+        |> List.map (fun row -> row.PathKey)
 
     /// File paths to unpack/copy for the current Package selection (folders expand to contained files).
     member private self.SelectedUnpackPathKeys() =
-        let selected = self.SelectedEntryPathKeys()
-        if selected.IsEmpty then
+        let rows =
+            self.LiveSelectedPackageRows()
+            |> List.filter (fun row -> not row.IsParent)
+        if rows.IsEmpty then
             []
         else
-            self.AllExplorerFileEntries()
-            |> List.map (fun entry -> Pathing.normalize entry.RelativePath)
-            |> List.filter (fun path -> self.PathMatchesSelection(path, selected))
-            |> List.distinct
+            let files =
+                rows
+                |> List.filter (fun row -> not row.IsDirectory)
+                |> List.map (fun row -> Pathing.normalize row.PathKey)
+            let dirs =
+                rows
+                |> List.filter (fun row -> row.IsDirectory)
+                |> List.map (fun row -> Pathing.normalize row.PathKey)
+            let nested =
+                if dirs.IsEmpty then
+                    []
+                else
+                    self.AllExplorerFileEntries()
+                    |> List.map (fun entry -> Pathing.normalize entry.RelativePath)
+                    |> List.filter (fun path ->
+                        dirs |> List.exists (fun dir -> self.PathIsUnder(path, dir)))
+            files @ nested |> List.distinct
 
     /// Last list pane the user worked in (Fn buttons steal focus — keep this, don't infer from leftover selection).
     member private self.FnSourceIsExplorer() = explorerPaneActive
@@ -3261,6 +3481,8 @@ type MainWindow() as self =
             unpackButton.IsEnabled <- canUnpak
         if not (isNull unpackAllButton) then
             unpackAllButton.IsEnabled <- canUnpakAll
+        if not (isNull closePackageButton) then
+            closePackageButton.IsEnabled <- self.HasOpenPackage()
         if not (isNull unpakMenuItem) then
             unpakMenuItem.IsEnabled <- canUnpak
         if not (isNull infoButton) then
@@ -4191,7 +4413,7 @@ type MainWindow() as self =
                 FilePickerOpenOptions(
                     Title = "Open ModPak",
                     AllowMultiple = false,
-                    FileTypeFilter = [| FilePickerFileType("ModPak", Patterns = ModPakFormat.OpenPatterns) |]
+                    FileTypeFilter = [| self.ModPakPackageFileType() |]
                 )
             if not (isNull start) then
                 options.SuggestedStartLocation <- start
@@ -4323,11 +4545,7 @@ type MainWindow() as self =
                                     Title = "Save ModPak",
                                     SuggestedFileName = slug + ModPakFormat.Extension,
                                     DefaultExtension = "mpx",
-                                    FileTypeChoices =
-                                        [|
-                                            FilePickerFileType("ModPak", Patterns = [| "*.mpx" |])
-                                            FilePickerFileType("ModPak (all)", Patterns = ModPakFormat.OpenPatterns)
-                                        |]
+                                    FileTypeChoices = [| self.ModPakPackageFileType() |]
                                 )
                             let! target =
                                 self.Ui (fun () ->
@@ -4381,11 +4599,7 @@ type MainWindow() as self =
                                 Title = "Pak ModPak",
                                 SuggestedFileName = suggested,
                                 DefaultExtension = "mpx",
-                                FileTypeChoices =
-                                    [|
-                                        FilePickerFileType("ModPak", Patterns = [| "*.mpx" |])
-                                        FilePickerFileType("ModPak (all)", Patterns = ModPakFormat.OpenPatterns)
-                                    |]
+                                FileTypeChoices = [| self.ModPakPackageFileType() |]
                             )
                         let! target =
                             self.Ui (fun () ->
@@ -4575,9 +4789,24 @@ type MainWindow() as self =
         if keys.IsEmpty then
             []
         else
-            self.AllExplorerFileEntries()
-            |> List.map (fun entry -> Pathing.normalize entry.RelativePath)
-            |> List.filter (fun path -> self.PathMatchesSelection(path, keys))
+            let entries =
+                self.AllExplorerFileEntries()
+                |> List.map (fun entry -> Pathing.normalize entry.RelativePath)
+            let fileKeys =
+                entries
+                |> List.map (fun path -> path.ToLowerInvariant())
+                |> Set.ofList
+            entries
+            |> List.filter (fun path ->
+                keys
+                |> List.exists (fun key ->
+                    let k = Pathing.normalize key
+                    if String.Equals(path, k, StringComparison.OrdinalIgnoreCase) then
+                        true
+                    elif fileKeys.Contains(k.ToLowerInvariant()) then
+                        false
+                    else
+                        self.PathIsUnder(path, k)))
             |> List.distinct
 
     /// Progress dialog + background copy, same as Explorer → Package.
@@ -4650,9 +4879,7 @@ type MainWindow() as self =
                     config.Save())
                 let cancelBtn = self.DialogCommandIconButton("Cancel", Symbol.Dismiss)
                 let copyBtn =
-                    self.DialogAccentIconButton(
-                        actionLabel,
-                        if moveMode then Symbol.ArrowRight else Symbol.Copy)
+                    self.DialogAccentIconButton(actionLabel, Symbol.ArrowRight, mirror = true)
                 let buttons =
                     DockPanel(LastChildFill = false, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
                 DockPanel.SetDock(cancelBtn, Dock.Left)
@@ -4833,6 +5060,7 @@ type MainWindow() as self =
             if not (isNull button) then
                 match button.Name with
                 | "FnInfoButton" -> self.FnInfo(button, null)
+                | "FnOpenButton" -> self.FnOpen(button, null)
                 | "FnCopyButton" -> self.FnCopy(button, null)
                 | "FnMoveButton" -> self.FnMove(button, null)
                 | "FnMkdirButton" -> self.FnMkdir(button, null)
@@ -4846,6 +5074,13 @@ type MainWindow() as self =
                 self.ShowDiskInfoDialog(null, null)
             else
                 self.ShowInfoDialog(null, null)
+
+    member private self.FnOpen(_: obj, _: RoutedEventArgs) =
+        if self.AcceptFn() then
+            if self.FnSourceIsExplorer() then
+                self.OpenSelectedDiskItem(null, null)
+            else
+                self.OpenSelectedFile(null, null)
 
     member private self.FnCopy(_: obj, _: RoutedEventArgs) =
         if self.AcceptFn() then
@@ -4864,6 +5099,8 @@ type MainWindow() as self =
                 let roots = self.SelectedDiskRoots()
                 if roots.IsEmpty then
                     self.Show("Select files or folders in Explorer to move.", muteBrush)
+                elif self.RootsHitOpenArchive roots then
+                    self.Show("Close the open package before moving it.", errBrush)
                 else
                     self.CopyDiskSelectionToPackage(roots, deleteSources = true)
             else
@@ -4896,6 +5133,9 @@ type MainWindow() as self =
             | Key.F1 when not alt ->
                 self.FnInfo(null, null)
                 e.Handled <- true
+            | Key.F2 when not alt ->
+                self.FnOpen(null, null)
+                e.Handled <- true
             | Key.F5 when not alt ->
                 self.FnCopy(null, null)
                 e.Handled <- true
@@ -4907,6 +5147,9 @@ type MainWindow() as self =
                 e.Handled <- true
             | Key.F8 when not alt ->
                 self.FnDelete(null, null)
+                e.Handled <- true
+            | Key.F10 when not alt ->
+                self.FnQuit(null, null)
                 e.Handled <- true
             | Key.F4 when alt ->
                 self.FnQuit(null, null)

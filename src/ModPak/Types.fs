@@ -46,8 +46,8 @@ module ModPakFormat =
     [<Literal>]
     let Extension = ".mpx"
 
-    /// Extra extensions accepted by Open (legacy / aliases).
-    let OpenPatterns = [| "*.mpx"; "*.modpak"; "*.mod"; "*.modx"; "*.m64" |]
+    /// Extensions shown in Open / Save and accepted when opening a package from Explorer.
+    let OpenPatterns = [| "*.mpx"; "*.mp64"; "*.modpak"; "*.modx" |]
 
 /// EXEC technology kind (wire Technology byte).
 type ExecTechnology =

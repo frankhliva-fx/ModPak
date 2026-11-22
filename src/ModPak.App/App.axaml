@@ -73,6 +73,9 @@
             <Setter Property="Padding" Value="10,8" />
             <Setter Property="CornerRadius" Value="4" />
         </Style>
+        <Style Selector="ListBox.pane ListBoxItem">
+            <Setter Property="Margin" Value="0,0,0,1" />
+        </Style>
         <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="#2A2521" />
         </Style>

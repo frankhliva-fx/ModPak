@@ -112,6 +112,23 @@
 
                     <Border Classes="tool-sep" />
 
+                    <Button x:Name="ClosePackageButton"
+                            Classes="tool"
+                            Click="ClosePackage"
+                            IsEnabled="False"
+                            ToolTip.Tip="Close the open package">
+                        <StackPanel Spacing="4">
+                            <ic:SymbolIcon Symbol="DismissCircle"
+                                           IconVariant="Color"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center" />
+                            <TextBlock Text="Close"
+                                       Classes="tool-label" />
+                        </StackPanel>
+                    </Button>
+
+                    <Border Classes="tool-sep" />
+
                     <Button Classes="tool" Click="ValidatePackage" ToolTip.Tip="Validate the loaded package">
                         <StackPanel Spacing="4">
                             <ic:SymbolIcon Symbol="ShieldCheckmark"
@@ -179,7 +196,7 @@
         <Grid x:Name="FnBar"
               DockPanel.Dock="Bottom"
               Margin="0,14,0,0"
-              ColumnDefinitions="*,*,*,*,*,*"
+              ColumnDefinitions="*,*,*,*,*,*,*"
               ColumnSpacing="6">
             <Button x:Name="FnInfoButton"
                     Classes="fn"
@@ -189,9 +206,17 @@
                     Click="FnInfo">
                 <TextBlock Text="F1  Info" HorizontalAlignment="Center" />
             </Button>
-            <Button x:Name="FnCopyButton"
+            <Button x:Name="FnOpenButton"
                     Classes="fn"
                     Grid.Column="1"
+                    Focusable="False"
+                    ClickMode="Press"
+                    Click="FnOpen">
+                <TextBlock Text="F2  Open" HorizontalAlignment="Center" />
+            </Button>
+            <Button x:Name="FnCopyButton"
+                    Classes="fn"
+                    Grid.Column="2"
                     Focusable="False"
                     ClickMode="Press"
                     Click="FnCopy">
@@ -199,7 +224,7 @@
             </Button>
             <Button x:Name="FnMoveButton"
                     Classes="fn"
-                    Grid.Column="2"
+                    Grid.Column="3"
                     Focusable="False"
                     ClickMode="Press"
                     Click="FnMove">
@@ -207,7 +232,7 @@
             </Button>
             <Button x:Name="FnMkdirButton"
                     Classes="fn"
-                    Grid.Column="3"
+                    Grid.Column="4"
                     Focusable="False"
                     ClickMode="Press"
                     Click="FnMkdir">
@@ -215,7 +240,7 @@
             </Button>
             <Button x:Name="FnDeleteButton"
                     Classes="fn"
-                    Grid.Column="4"
+                    Grid.Column="5"
                     Focusable="False"
                     ClickMode="Press"
                     Click="FnDelete">
@@ -223,11 +248,11 @@
             </Button>
             <Button x:Name="FnQuitButton"
                     Classes="fn accent"
-                    Grid.Column="5"
+                    Grid.Column="6"
                     Focusable="False"
                     ClickMode="Press"
                     Click="FnQuit">
-                <TextBlock Text="Alt+F4  Quit" HorizontalAlignment="Center" />
+                <TextBlock Text="F10 / Alt+F4  Quit" HorizontalAlignment="Center" />
             </Button>
         </Grid>
 
@@ -241,17 +266,29 @@
                                Margin="0,0,0,8"
                                Text="Explorer" />
                     <Grid Grid.Row="1"
-                          ColumnDefinitions="*,Auto"
+                          ColumnDefinitions="Auto,*,Auto"
                           Margin="0,0,0,8">
+                        <Button Grid.Column="0"
+                                Classes="clear"
+                                Margin="0,0,8,0"
+                                MinWidth="40"
+                                MinHeight="36"
+                                VerticalAlignment="Center"
+                                Click="GoExplorerHomeClick">
+                            <ic:SymbolIcon Symbol="Home"
+                                           IconVariant="Filled"
+                                           FontSize="16"
+                                           Foreground="#C8B8A8" />
+                        </Button>
                         <TextBox x:Name="DiskPathBox"
-                                 Grid.Column="0"
+                                 Grid.Column="1"
                                  MinHeight="36"
                                  VerticalAlignment="Center"
                                  Watermark="Path or This PC"
                                  KeyDown="DiskPathBoxKeyDown"
                                  TextChanged="DiskPathBoxTextChanged" />
                         <Button x:Name="GoDiskPathButton"
-                                Grid.Column="1"
+                                Grid.Column="2"
                                 Classes="clear"
                                 Margin="8,0,0,0"
                                 MinWidth="40"
@@ -266,6 +303,7 @@
                         </Button>
                     </Grid>
                     <ListBox x:Name="DiskList"
+                             Classes="pane"
                              Grid.Row="2"
                              MinHeight="120"
                              HorizontalAlignment="Stretch"
@@ -422,9 +460,45 @@
                         x:Name="MetadataTabs"
                         SelectionChanged="MetadataTabChanged">
                     <TabItem Header="Package">
-                    <Grid RowDefinitions="*,Auto">
+                    <Grid RowDefinitions="Auto,*,Auto">
+                    <Grid Grid.Row="0"
+                          ColumnDefinitions="Auto,*,Auto"
+                          Margin="0,0,0,8">
+                        <Button Grid.Column="0"
+                                Classes="clear"
+                                Margin="0,0,8,0"
+                                MinWidth="40"
+                                MinHeight="36"
+                                VerticalAlignment="Center"
+                                Click="GoPackageRootClick">
+                            <ic:SymbolIcon Symbol="Home"
+                                           IconVariant="Filled"
+                                           FontSize="16"
+                                           Foreground="#C8B8A8" />
+                        </Button>
+                        <TextBox x:Name="PackagePathBox"
+                                 Grid.Column="1"
+                                 MinHeight="36"
+                                 VerticalAlignment="Center"
+                                 Watermark="package.mpx://"
+                                 KeyDown="PackagePathBoxKeyDown"
+                                 TextChanged="PackagePathBoxTextChanged" />
+                        <Button Grid.Column="2"
+                                Classes="clear"
+                                Margin="8,0,0,0"
+                                MinWidth="40"
+                                MinHeight="36"
+                                VerticalAlignment="Center"
+                                Click="ApplyPackagePathClick">
+                            <ic:SymbolIcon Symbol="Checkmark"
+                                           IconVariant="Filled"
+                                           FontSize="16"
+                                           Foreground="#C8B8A8" />
+                        </Button>
+                    </Grid>
                     <ListBox x:Name="FileList"
-                             Grid.Row="0"
+                             Classes="pane"
+                             Grid.Row="1"
                              SelectionMode="Multiple"
                              DragDrop.AllowDrop="True"
                              GotFocus="FileListGotFocus"
@@ -562,7 +636,7 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <Border Grid.Row="1"
+                    <Border Grid.Row="2"
                             Classes="pane-status pane-footer">
                         <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*"
                               VerticalAlignment="Center">
