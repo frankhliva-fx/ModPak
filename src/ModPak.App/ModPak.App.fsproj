@@ -21,6 +21,11 @@
   </ItemGroup>
   <ItemGroup>
     <AvaloniaResource Include="Assets\icon.ico" />
+    <!-- Explorer file-type icon rendered from Assets\mpx.svg. Not the program icon. -->
+    <Content Include="Assets\mpx.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>mpx.ico</Link>
+    </Content>
     <AvaloniaResource Include="Assets\KI.png" />
     <AvaloniaResource Include="Assets\script-icons\*.svg" />
   </ItemGroup>

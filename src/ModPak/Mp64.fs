@@ -401,7 +401,14 @@ module Mp64 =
             Ok [ { Begin = begin'; End = end' } ]
 
     /// Build archive (major 4 minor 0): MANI (module+icon) + EXEC + FILE + LZ4 directory + CRC footer.
-    let writeBytes (manifest: ManifestSpec option) (execs: ExecSpec list) (files: FileSpec list) : ModPakResult<byte[]> =
+    /// `progress` is called before each file (1-based index, total, relative path). Return false to cancel.
+    let writeBytes
+        (manifest: ManifestSpec option)
+        (execs: ExecSpec list)
+        (files: FileSpec list)
+        (progress: int -> int -> string -> bool)
+        : ModPakResult<byte[]>
+        =
         try
             use ms = new MemoryStream()
             use writer = new BinaryWriter(ms, utf8, leaveOpen = true)
@@ -436,23 +443,27 @@ module Mp64 =
             match writeExec execs with
             | Error error -> Error error
             | Ok () ->
-                let rec writeFiles remaining =
+                let totalFiles = List.length files
+                let rec writeFiles remaining index =
                     match remaining with
                     | [] -> Ok ()
                     | (file: FileSpec) :: rest ->
-                        let mime = if String.IsNullOrWhiteSpace file.Mime then "" else file.Mime
-                        let meta =
-                            { file.Meta with
-                                UnpackedSize = uint64 file.Bytes.Length
-                                Crc32 = Hash.crc32 file.Bytes
-                            }
-                        match appendPayload ms writer file.Codec file.Bytes with
-                        | Error error -> Error error
-                        | Ok segments ->
-                            planned.Add(PlannedFile(file.Path, mime, file.Codec, meta, segments))
-                            writeFiles rest
+                        if not (progress index totalFiles file.Path) then
+                            Error (Io "Cancelled.")
+                        else
+                            let mime = if String.IsNullOrWhiteSpace file.Mime then "" else file.Mime
+                            let meta =
+                                { file.Meta with
+                                    UnpackedSize = uint64 file.Bytes.Length
+                                    Crc32 = Hash.crc32 file.Bytes
+                                }
+                            match appendPayload ms writer file.Codec file.Bytes with
+                            | Error error -> Error error
+                            | Ok segments ->
+                                planned.Add(PlannedFile(file.Path, mime, file.Codec, meta, segments))
+                                writeFiles rest (index + 1)
 
-                match writeFiles files with
+                match writeFiles files 1 with
                 | Error error -> Error error
                 | Ok () ->
                     use dirMs = new MemoryStream()
@@ -482,8 +493,15 @@ module Mp64 =
         with error ->
             Error (BadArchive error.Message)
 
-    let writeFile (path: string) (manifest: ManifestSpec option) (execs: ExecSpec list) (files: FileSpec list) : ModPakResult<unit> =
-        match writeBytes manifest execs files with
+    let writeFileReporting
+        (progress: int -> int -> string -> bool)
+        (path: string)
+        (manifest: ManifestSpec option)
+        (execs: ExecSpec list)
+        (files: FileSpec list)
+        : ModPakResult<unit>
+        =
+        match writeBytes manifest execs files progress with
         | Error error -> Error error
         | Ok bytes ->
             try
@@ -495,6 +513,15 @@ module Mp64 =
                 Ok ()
             with error ->
                 Error (Io error.Message)
+
+    let writeFile
+        (path: string)
+        (manifest: ManifestSpec option)
+        (execs: ExecSpec list)
+        (files: FileSpec list)
+        : ModPakResult<unit>
+        =
+        writeFileReporting (fun _ _ _ -> true) path manifest execs files
 
     let listFiles (archive: Archive) (fileBytes: byte[]) : ModPakResult<(string * string * byte * byte[] * FileMeta) list> =
         let rec walk (entries: Entry list) (acc: (string * string * byte * byte[] * FileMeta) list) =

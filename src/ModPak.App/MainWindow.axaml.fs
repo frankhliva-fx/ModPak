@@ -39,6 +39,14 @@ module private ModPakDnD =
     /// In-app Package → Explorer relative paths (newline-separated).
     let PackagePathsFormat = DataFormat.CreateStringApplicationFormat "modpak-pkg-paths"
 
+module private ShellNotify =
+    [<DllImport("shell32.dll")>]
+    extern void SHChangeNotify(uint32 wEventId, uint32 uFlags, nativeint dwItem1, nativeint dwItem2)
+
+    /// Ask Explorer to drop its cached file-type icons.
+    let assocChanged () =
+        SHChangeNotify(0x08000000u, 0u, 0n, 0n)
+
 type private ScriptKind =
     | Js
     | Wasm
@@ -1393,19 +1401,7 @@ type MainWindow() as self =
             else
                 match packagePath with
                 | Some output ->
-                    packingInProgress <- true
-                    try
-                        match self.WritePackageTo output with
-                        | Error error ->
-                            self.Show(string error, errBrush)
-                            return false
-                        | Ok(next, codec, mani) ->
-                            self.Show(
-                                $"Saved with {self.CodecLabel codec}{mani} · {next.Entries.Length} files · {output}",
-                                okBrush)
-                            return true
-                    finally
-                        packingInProgress <- false
+                    return! self.StartPackageSave(output, false)
                 | None ->
                     packingInProgress <- true
                     try
@@ -1436,15 +1432,7 @@ type MainWindow() as self =
                                     return false
                                 else
                                     config.RememberSaveFile output
-                                    match self.WritePackageTo output with
-                                    | Error error ->
-                                        self.Show(string error, errBrush)
-                                        return false
-                                    | Ok(next, codec, mani) ->
-                                        self.Show(
-                                            $"Saved with {self.CodecLabel codec}{mani} · {next.Entries.Length} files · {output}",
-                                            okBrush)
-                                        return true
+                                    return! self.StartPackageSave(output, false)
                         with error ->
                             self.Show(error.Message, errBrush)
                             return false
@@ -4362,7 +4350,7 @@ type MainWindow() as self =
                 || arg.EndsWith(".modpak", StringComparison.OrdinalIgnoreCase)
                 || File.Exists arg))
 
-    /// Per-user .mpx open → this exe "%1" (no admin).
+    /// Per-user package extensions open with this exe. File-type icon is mpx.ico, not the program icon.
     member private self.EnsureMpxFileAssociation() =
         if RuntimeInformation.IsOSPlatform OSPlatform.Windows then
             try
@@ -4372,11 +4360,12 @@ type MainWindow() as self =
                     | path -> path
                 if not (String.IsNullOrWhiteSpace exe) && File.Exists exe then
                     let command = sprintf "\"%s\" \"%%1\"" exe
-                    let icon = sprintf "\"%s\",0" exe
-                    use ext = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.mpx")
-                    if not (isNull ext) then
-                        ext.SetValue("", "ModPak.Package")
-                        ext.SetValue("Content Type", "application/x-modpak")
+                    let iconFile = Path.Combine(Path.GetDirectoryName exe, "mpx.ico")
+                    for extension in [| ".mpx"; ".modpak"; ".mp64"; ".modx" |] do
+                        use ext = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + extension)
+                        if not (isNull ext) then
+                            ext.SetValue("", "ModPak.Package")
+                            ext.SetValue("Content Type", "application/x-modpak")
                     use progId = Registry.CurrentUser.CreateSubKey(@"Software\Classes\ModPak.Package")
                     if not (isNull progId) then
                         progId.SetValue("", "ModPak package")
@@ -4384,10 +4373,12 @@ type MainWindow() as self =
                         Registry.CurrentUser.CreateSubKey(@"Software\Classes\ModPak.Package\shell\open\command")
                     if not (isNull openCmd) then
                         openCmd.SetValue("", command)
-                    use defaultIcon =
-                        Registry.CurrentUser.CreateSubKey(@"Software\Classes\ModPak.Package\DefaultIcon")
-                    if not (isNull defaultIcon) then
-                        defaultIcon.SetValue("", icon)
+                    if File.Exists iconFile then
+                        use defaultIcon =
+                            Registry.CurrentUser.CreateSubKey(@"Software\Classes\ModPak.Package\DefaultIcon")
+                        if not (isNull defaultIcon) then
+                            defaultIcon.SetValue("", sprintf "\"%s\",0" iconFile)
+                    ShellNotify.assocChanged ()
             with _ ->
                 ()
 
@@ -4450,64 +4441,213 @@ type MainWindow() as self =
         }
         |> ignore
 
-    member private self.ApplyCodecs(entries: ModPakEntry list) =
-        entries
-        |> List.map (fun entry ->
-            { entry with Codec = self.GetFileCodec entry.RelativePath })
-
-    member private self.RebuildPackageForSave (output: string) =
-        let manifestPayload = self.CurrentManifestPayload()
-        let execs =
-            match package with
-            | Some pkg -> pkg.Exec
-            | None -> []
-        match self.MergePackageAndPendingEntries() with
-        | Error error -> Error error
-        | Ok merged when merged.IsEmpty && manifestPayload.IsNone && execs.IsEmpty ->
-            Error (InvalidPath "Nothing to pak.")
-        | Ok merged ->
-            let entries = self.ApplyCodecs merged
-            Pack.write output {
-                Manifest = manifestPayload
-                Exec = execs
-                Entries = entries
-            }
-
-    member private self.WritePackageTo(output: string) =
-        match self.ApplyCurrentScriptToPackage() with
-        | Error msg -> Error(Io msg)
-        | Ok () ->
-            let codec = self.SelectedCodec()
-            match self.RebuildPackageForSave output with
-            | Error error -> Error error
+    /// Snapshot on the UI thread, compress and write on a worker, show progress.
+    member private self.StartPackageSave(output: string, pak: bool) : Task<bool> =
+        task {
+            match self.ApplyCurrentScriptToPackage() with
+            | Error msg ->
+                self.Show(msg, errBrush)
+                return false
             | Ok () ->
-                match Unpack.read output with
-                | Error error -> Error error
-                | Ok next ->
-                    package <- Some next
-                    packagePath <- Some output
-                    pendingPaths <- []
-                    pendingRenames <- Map.empty
-                    fileCodecs <-
-                        next.Entries
-                        |> List.fold (fun map entry -> map.Add(self.CodecKey entry.RelativePath, entry.Codec)) Map.empty
-                    config.RememberLastPackage output
-                    self.ClearDirty()
-                    self.UpdateWindowTitle()
-                    self.ShowPackageFiles next
-                    self.SelectScriptKindFromPackage next
-                    self.LoadScriptEditor()
-                    let mani =
-                        if next.Manifest.IsSome then " · MANI" else ""
-                    Ok(next, codec, mani)
-
-    member private self.SavePackageToPath(output: string) =
-        match self.WritePackageTo output with
-        | Error error -> self.Show(string error, errBrush)
-        | Ok(next, codec, mani) ->
-            self.Show(
-                $"Saved with {self.CodecLabel codec}{mani} · {next.Entries.Length} files · {output}",
-                okBrush)
+                let manifestPayload = self.CurrentManifestPayload()
+                let execs =
+                    match package with
+                    | Some pkg -> pkg.Exec
+                    | None -> []
+                let existing =
+                    match package with
+                    | Some pkg -> pkg.Entries
+                    | None -> []
+                let pending = pendingPaths
+                let renames = pendingRenames
+                let codecs = fileCodecs
+                let fallback = self.SelectedCodec()
+                let codecKey (path: string) = Pathing.normalize(path).ToLowerInvariant()
+                let doing = if pak then "Paking" else "Saving"
+                let title = if pak then "Paking package" else "Saving package"
+                let logItems = ObservableCollection<string>()
+                let bar =
+                    ProgressBar(
+                        Minimum = 0.0,
+                        Maximum = 100.0,
+                        Height = 12.0,
+                        Value = 0.0,
+                        IsIndeterminate = true,
+                        Margin = Thickness(0.0, 0.0, 0.0, 12.0))
+                let status =
+                    TextBlock(
+                        Text = "Preparing…",
+                        Foreground = SolidColorBrush(Color.Parse "#F3EDE6"),
+                        FontSize = 13.0,
+                        Margin = Thickness(0.0, 0.0, 0.0, 10.0),
+                        TextWrapping = TextWrapping.Wrap)
+                let log =
+                    ListBox(
+                        ItemsSource = logItems,
+                        Height = 200.0,
+                        Margin = Thickness(0.0, 0.0, 0.0, 12.0))
+                let cancelBtn = self.DialogCommandIconButton("Cancel", Symbol.Dismiss)
+                let buttons =
+                    DockPanel(LastChildFill = false, Margin = Thickness(0.0, 4.0, 0.0, 0.0))
+                DockPanel.SetDock(cancelBtn, Dock.Left)
+                buttons.Children.Add cancelBtn
+                let panel = StackPanel(Margin = Thickness(22.0))
+                panel.Children.Add status
+                panel.Children.Add bar
+                panel.Children.Add log
+                panel.Children.Add buttons
+                let dialog = self.WrapStudioDialog(title, panel)
+                dialog.Width <- 480.0
+                let cts = new CancellationTokenSource()
+                let mutable alive = true
+                let mutable succeeded = false
+                let mutable settled = false
+                let safeCancel () =
+                    try
+                        cts.Cancel()
+                    with _ ->
+                        ()
+                cancelBtn.Click.Add(fun _ ->
+                    if settled then
+                        dialog.Close()
+                    else
+                        safeCancel ()
+                        status.Text <- "Cancelling…"
+                        cancelBtn.IsEnabled <- false)
+                dialog.Closed.Add(fun _ ->
+                    alive <- false
+                    safeCancel ()
+                    packingInProgress <- false)
+                packingInProgress <- true
+                dialog.Opened.Add(fun _ ->
+                    ignore (
+                        Task.Run(fun () ->
+                            let finish (ok: bool) (message: string) (brush: IBrush) (closeDialog: bool) =
+                                Dispatcher.UIThread.Post(fun () ->
+                                    if alive then
+                                        succeeded <- ok
+                                        settled <- true
+                                        bar.IsIndeterminate <- false
+                                        bar.Value <- 100.0
+                                        status.Text <- message
+                                        cancelBtn.IsEnabled <- true
+                                        cancelBtn.Content <- self.DialogButtonContent("Close", Symbol.Dismiss)
+                                        if not ok && message <> "Cancelled." then
+                                            self.Show(message, brush)
+                                        if closeDialog then
+                                            dialog.Close())
+                            try
+                                let merged =
+                                    if pending.IsEmpty then
+                                        Ok existing
+                                    else
+                                        Pack.entriesFromFiles pending
+                                        |> Result.map (fun staged ->
+                                            staged
+                                            |> List.map (fun entry ->
+                                                match renames.TryFind(codecKey entry.RelativePath) with
+                                                | None -> entry
+                                                | Some renamed ->
+                                                    let path = Pathing.normalize renamed
+                                                    { entry with
+                                                        RelativePath = path
+                                                        Mime = Mime.ofPath path }))
+                                        |> Result.map (fun staged ->
+                                            let stagedKeys =
+                                                staged
+                                                |> List.map (fun entry -> codecKey entry.RelativePath)
+                                                |> Set.ofList
+                                            let kept =
+                                                existing
+                                                |> List.filter (fun entry ->
+                                                    not (stagedKeys.Contains(codecKey entry.RelativePath)))
+                                            kept @ staged)
+                                match merged with
+                                | Error error -> finish false (string error) errBrush false
+                                | Ok entries when entries.IsEmpty && manifestPayload.IsNone && execs.IsEmpty ->
+                                    finish false "Nothing to pak." errBrush false
+                                | Ok entries when cts.IsCancellationRequested ->
+                                    finish false "Cancelled." muteBrush false
+                                | Ok entries ->
+                                    let built =
+                                        entries
+                                        |> List.map (fun entry ->
+                                            let codec =
+                                                match codecs.TryFind(codecKey entry.RelativePath) with
+                                                | Some value -> value
+                                                | None -> fallback
+                                            { entry with Codec = codec })
+                                    let pkg = {
+                                        Manifest = manifestPayload
+                                        Exec = execs
+                                        Entries = built
+                                    }
+                                    let progress index total path =
+                                        if cts.IsCancellationRequested then
+                                            false
+                                        else
+                                            Dispatcher.UIThread.Post(fun () ->
+                                                if alive then
+                                                    bar.IsIndeterminate <- false
+                                                    status.Text <- $"{doing} {index} / {total}"
+                                                    bar.Value <- float index / float total * 100.0
+                                                    logItems.Add path
+                                                    if logItems.Count > 0 then
+                                                        log.ScrollIntoView(logItems.[logItems.Count - 1]))
+                                            true
+                                    match Pack.writeReporting progress output pkg with
+                                    | Error error ->
+                                        let cancelled =
+                                            match error with
+                                            | Io "Cancelled." -> true
+                                            | _ -> false
+                                        if cancelled then
+                                            finish false "Cancelled." muteBrush false
+                                        else
+                                            finish false (string error) errBrush false
+                                    | Ok () ->
+                                        match Unpack.read output with
+                                        | Error error -> finish false (string error) errBrush false
+                                        | Ok next ->
+                                            Dispatcher.UIThread.Post(fun () ->
+                                                if alive then
+                                                    package <- Some next
+                                                    packagePath <- Some output
+                                                    pendingPaths <- []
+                                                    pendingRenames <- Map.empty
+                                                    fileCodecs <-
+                                                        next.Entries
+                                                        |> List.fold
+                                                            (fun map entry ->
+                                                                map.Add(self.CodecKey entry.RelativePath, entry.Codec))
+                                                            Map.empty
+                                                    config.RememberLastPackage output
+                                                    self.ClearDirty()
+                                                    self.UpdateWindowTitle()
+                                                    self.ShowPackageFiles next
+                                                    self.SelectScriptKindFromPackage next
+                                                    self.LoadScriptEditor()
+                                                    let mani = if next.Manifest.IsSome then " · MANI" else ""
+                                                    let word = if pak then "Paked" else "Saved"
+                                                    let message =
+                                                        $"{word} with {self.CodecLabel fallback}{mani} · {next.Entries.Length} files · {output}"
+                                                    succeeded <- true
+                                                    settled <- true
+                                                    bar.IsIndeterminate <- false
+                                                    bar.Value <- 100.0
+                                                    status.Text <- message
+                                                    self.Show(message, okBrush)
+                                                    dialog.Close())
+                            with ex ->
+                                finish false ex.Message errBrush false
+                            try
+                                cts.Dispose()
+                            with _ ->
+                                ()
+                            )))
+                let! _ = dialog.ShowDialog(self)
+                return succeeded
+        }
 
     member private self.SavePackage(_: obj, _: RoutedEventArgs) =
         if packingInProgress then
@@ -4520,12 +4660,7 @@ type MainWindow() as self =
             self.Show("Name is required when Manifest is on.", errBrush)
         else
             match packagePath with
-            | Some output ->
-                packingInProgress <- true
-                try
-                    self.SavePackageToPath output
-                finally
-                    packingInProgress <- false
+            | Some output -> ignore (self.StartPackageSave(output, false))
             | None ->
                 // No path yet (New / in-memory) — pick a file like Pak.
                 packingInProgress <- true
@@ -4560,8 +4695,8 @@ type MainWindow() as self =
                                         | file ->
                                             let output = file.Path.LocalPath
                                             config.RememberSaveFile output
-                                            self.SavePackageToPath output
-                                        return ()
+                                            let! _ = self.StartPackageSave(output, false)
+                                            return ()
                                     })
                         with error ->
                             self.Show(error.Message, errBrush)
@@ -4614,13 +4749,8 @@ type MainWindow() as self =
                                     | file ->
                                         let output = file.Path.LocalPath
                                         config.RememberSaveFile output
-                                        match self.WritePackageTo output with
-                                        | Error error -> self.Show(string error, errBrush)
-                                        | Ok(next, codec, mani) ->
-                                            self.Show(
-                                                $"Paked with {self.CodecLabel codec}{mani} · {next.Entries.Length} files · {output}",
-                                                okBrush)
-                                    return ()
+                                        let! _ = self.StartPackageSave(output, true)
+                                        return ()
                                 })
                     with error ->
                         self.Show(error.Message, errBrush)

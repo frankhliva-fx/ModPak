@@ -140,7 +140,7 @@ module Pack =
             Bytes = item.Bytes
         }
 
-    let write (path: string) (package: ModPakPackage) : ModPakResult<unit> =
+    let private writeParts (package: ModPakPackage) =
         let manifestChunk =
             match package.Manifest with
             | None -> None
@@ -168,7 +168,21 @@ module Pack =
                         Meta = entry.Meta
                     }
                 spec)
+        manifestChunk, execs, fileSpecs
+
+    let write (path: string) (package: ModPakPackage) : ModPakResult<unit> =
+        let manifestChunk, execs, fileSpecs = writeParts package
         Mp64.writeFile path manifestChunk execs fileSpecs
+
+    /// Same write, reporting each file before it is compressed. Return false from `progress` to cancel.
+    let writeReporting
+        (progress: int -> int -> string -> bool)
+        (path: string)
+        (package: ModPakPackage)
+        : ModPakResult<unit>
+        =
+        let manifestChunk, execs, fileSpecs = writeParts package
+        Mp64.writeFileReporting progress path manifestChunk execs fileSpecs
 
     /// Apply the same codec to every FILE entry, then write.
     let writeWithCodec (codec: byte) (path: string) (package: ModPakPackage) : ModPakResult<unit> =
